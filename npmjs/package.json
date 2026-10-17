@@ -1,0 +1,41 @@
+{
+  "name": "@tomasko/xmlfmt",
+  "version": "0.1.1",
+  "description": "XML formatter — MoonBit port of python xmlformatter",
+  "license": "Apache-2.0",
+  "bin": {
+    "xmlfmt": "bin/xmlfmt.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/xmlfmt.js",
+    "install.js",
+    "lib.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tomasky/xmlfmt.git"
+  },
+  "homepage": "https://github.com/tomasky/xmlfmt",
+  "bugs": "https://github.com/tomasky/xmlfmt/issues",
+  "keywords": [
+    "xml",
+    "formatter",
+    "moonbit"
+  ],
+  "preferGlobal": true
+}
