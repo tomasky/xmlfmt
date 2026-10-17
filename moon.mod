@@ -1,5 +1,5 @@
 name = "kupas/xmlfmt"
-version = "0.1.1"
+version = "0.1.2"
 readme = "README.mbt.md"
 repository = "https://github.com/tomasky/xmlfmt"
 license = "Apache-2.0"

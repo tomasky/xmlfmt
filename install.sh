@@ -2,7 +2,7 @@
 # xmlfmt installer — https://github.com/tomasky/xmlfmt
 #
 #   curl -LsSf https://raw.githubusercontent.com/tomasky/xmlfmt/main/install.sh | bash
-#   curl -LsSf https://github.com/tomasky/xmlfmt/main/install.sh | bash -s -- --version 0.1.1
+#   curl -LsSf https://github.com/tomasky/xmlfmt/main/install.sh | bash -s -- --version 0.1.2
 #
 # Environment overrides:
 #   XMLFMT_VERSION        release version to install (default: latest)
