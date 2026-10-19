@@ -84,9 +84,7 @@ case "$os-$arch" in
   Linux-x86_64 | Linux-amd64) target="linux-x86_64" ;;
   Linux-aarch64 | Linux-arm64) target="linux-aarch64" ;;
   Darwin-arm64) target="darwin-aarch64" ;;
-  Darwin-x86_64)
-    err "unsupported platform: $os-$arch — the MoonBit toolchain no longer ships a darwin-x86_64 target, so no Intel macOS build is published"
-    ;;
+  Darwin-x86_64) target="darwin-x86_64" ;;
   *)
     err "unsupported platform: $os-$arch (xmlfmt supports linux-x86_64, linux-aarch64 and darwin-aarch64)"
     ;;

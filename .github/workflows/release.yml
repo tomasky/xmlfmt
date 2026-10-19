@@ -96,6 +96,20 @@ jobs:
       # the wrapper directory gets a symlink to the system `ar`. Link
       # invocations also get the fortify shim; compile invocations (`-c`) are
       # passed through untouched.
+      - name: Prepare Linux headers for musl
+        if: matrix.musl
+        run: |
+          rm -rf /tmp/linux-headers
+          mkdir -p /tmp/linux-headers
+          ln -s /usr/include/linux /tmp/linux-headers/linux
+          case "$(uname -m)" in
+            x86_64) asm_dir=/usr/include/x86_64-linux-gnu/asm ;;
+            aarch64) asm_dir=/usr/include/aarch64-linux-gnu/asm ;;
+            *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          ln -s "$asm_dir" /tmp/linux-headers/asm
+          ln -s /usr/include/asm-generic /tmp/linux-headers/asm-generic
+
       - name: Build (static musl, release)
         if: matrix.musl
         run: |
@@ -103,7 +117,7 @@ jobs:
           #!/bin/sh
           for arg in "$@"; do
             if [ "$arg" = "-c" ]; then
-              exec musl-gcc "$@"
+              exec musl-gcc -D_GNU_SOURCE -include limits.h -I/tmp/linux-headers "$@"
             fi
           done
           exec musl-gcc "$@" -static -L/tmp/xmlfmt-cc -lmbfortify
@@ -147,9 +161,83 @@ jobs:
             dist/xmlfmt-${{ matrix.target }}.sha256
           if-no-files-found: error
 
+  build-darwin-x64:
+    name: build darwin-x64 (zig-cross)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoonBit toolchain
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Install Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: moon version
+        run: moon version
+
+      # A fresh runner has an empty registry index, so dependencies
+      # (moonbitlang/x, ...) cannot be resolved until the index is fetched.
+      - name: Prepare macOS headers shim for zig
+        run: |
+          rm -rf /tmp/macos-headers
+          mkdir -p /tmp/macos-headers/sys
+          cat > /tmp/macos-headers/sys/vnode.h <<'EOF'
+          #ifndef _SYS_VNODE_H
+          #define _SYS_VNODE_H
+          enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD, VSTR, VCPLX };
+          #endif
+          EOF
+
+      - name: Update registry index
+        run: moon update
+
+      - name: Build (darwin-x64, via zig-cross)
+        env:
+          C_INCLUDE_PATH: /tmp/macos-headers
+        run: |
+          moonx moonrockz/zig-cross@0.1.2 build darwin-x64
+
+      - name: Stage binary
+        run: |
+          mkdir -p dist
+          cp _build/cross/darwin-x64/native/release/build/cmd/xmlfmt/xmlfmt.exe "dist/xmlfmt-darwin-x86_64"
+          chmod +x "dist/xmlfmt-darwin-x86_64"
+          file "dist/xmlfmt-darwin-x86_64" || true
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "xmlfmt-darwin-x86_64" > "xmlfmt-darwin-x86_64.sha256")
+          else
+            (cd dist && shasum -a 256 "xmlfmt-darwin-x86_64" > "xmlfmt-darwin-x86_64.sha256")
+          fi
+
+      - name: Verify macOS x64 binary header
+        run: |
+          python3 - "dist/xmlfmt-darwin-x86_64" <<'PY'
+          import struct, sys
+          data = open(sys.argv[1], "rb").read()[:16]
+          if data[:4] != b"\xcf\xfa\xed\xfe":
+              raise SystemExit(f"expected Mach-O magic, found {data[:4]!r}")
+          (cputype,) = struct.unpack_from("<I", data, 4)
+          if cputype != 16777223:
+              raise SystemExit(f"expected Mach-O cputype 16777223, found {cputype}")
+          print(f"OK darwin-x64: Mach-O cputype {cputype}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xmlfmt-darwin-x86_64
+          path: |
+            dist/xmlfmt-darwin-x86_64
+            dist/xmlfmt-darwin-x86_64.sha256
+          if-no-files-found: error
+
   release:
     name: publish GitHub release
-    needs: build
+    needs: [build, build-darwin-x64]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:

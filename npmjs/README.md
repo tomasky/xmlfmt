@@ -27,9 +27,7 @@ Supported targets:
 | `linux-x64`          | `xmlfmt-linux-x86_64`   |
 | `linux-arm64`        | `xmlfmt-linux-aarch64`  |
 | `darwin-arm64`       | `xmlfmt-darwin-aarch64` |
-
-Intel macOS (`darwin-x64`) is not supported: the MoonBit toolchain no longer
-ships a `darwin-x86_64` target, so no such build can be produced.
+| `darwin-x64`         | `xmlfmt-darwin-x86_64` |
 
 Assets are produced by `.github/workflows/release.yml` when a `v*` tag is
 pushed.
@@ -42,7 +40,7 @@ scripts unless the package is approved, so `postinstall` is skipped and
 
 ```
 npm warn install-scripts 1 package had install scripts blocked because they are not covered by allowScripts:
-npm warn install-scripts   @tomasko/xmlfmt@0.1.2 (postinstall: node install.js)
+npm warn install-scripts   @tomasko/xmlfmt@0.1.3 (postinstall: node install.js)
 xmlfmt: native binary not found at .../node_modules/@tomasko/xmlfmt/bin/xmlfmt
 ```
 

@@ -21,6 +21,7 @@ const TARGETS = {
   "linux-x64": "linux-x86_64",
   "linux-arm64": "linux-aarch64",
   "darwin-arm64": "darwin-aarch64",
+  "darwin-x64": "darwin-x86_64",
 };
 
 function repoSlug(repo) {
@@ -118,7 +119,7 @@ async function ensureBinary({ force = false, log = () => {} } = {}) {
   if (!target) {
     throw new Error(
       `unsupported platform ${process.platform}-${process.arch}; xmlfmt ` +
-        `supports linux-x64, linux-arm64 and darwin-arm64`
+        `supports linux-x64, linux-arm64, darwin-arm64 and darwin-x64`
     );
   }
 
