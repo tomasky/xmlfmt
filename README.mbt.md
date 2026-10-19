@@ -50,7 +50,7 @@ pnpm install -g @tomasko/xmlfmt
 
 ### Library
 
-```moonbit
+```moonbit nocheck
 import "kupas/xmlfmt"
 
 fn main {

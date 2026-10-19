@@ -1,6 +1,6 @@
 {
   "name": "@tomasko/xmlfmt",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "XML formatter — MoonBit port of python xmlformatter",
   "license": "Apache-2.0",
   "bin": {

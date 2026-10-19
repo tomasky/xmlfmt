@@ -5,7 +5,7 @@
 
 ///|
 priv enum XmlToken {
-  XmlDecl(String, Option[String], Option[Bool]) // version, encoding, standalone
+  XmlDecl(String, String?, Bool?) // version, encoding, standalone
   StartElement(String, Array[(String, String)]) // name, attrs
   EndElement(String) // name
   CharacterData(String) // text
@@ -13,7 +13,7 @@ priv enum XmlToken {
   ProcessingInstruction(String, String) // target, data
   StartCdataSection
   EndCdataSection
-  StartDoctypeDecl(String, Option[String], Option[String], Bool) // name, system_id, public_id, inline
+  StartDoctypeDecl(String, String?, String?, Bool) // name, system_id, public_id, inline
   EndDoctypeDecl
 }
 
@@ -21,7 +21,7 @@ priv enum XmlToken {
 
 ///|
 pub(all) struct XmlOptions {
-  indent : Int
+  indent : Int32
   indent_char : String
   compress : Bool
   selfclose : Bool
@@ -106,7 +106,7 @@ fn encode_attribute(val : String, encode : Bool) -> String {
 }
 
 ///|
-fn indent_prefix(level : Int, options : XmlOptions) -> String {
+fn indent_prefix(level : Int32, options : XmlOptions) -> String {
   if options.compress || options.indent == 0 {
     ""
   } else {
@@ -168,16 +168,14 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           }
           tokens.push(XmlToken::XmlDecl(version, encoding, standalone))
         } else {
-          tokens.push(
-            XmlToken::ProcessingInstruction(target, trim_str(data)),
-          )
+          tokens.push(XmlToken::ProcessingInstruction(target, trim_str(data)))
         }
       } else if i + 2 < n && chars[i + 1] == '!' && chars[i + 2] == '-' {
         // Comment
         i = i + 4
         let mut text = ""
         while i + 2 < n &&
-          !(chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>') {
+              !(chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>') {
           text = text + chars[i].to_string()
           i = i + 1
         }
@@ -198,7 +196,7 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           i = i + 9
           let mut text = ""
           while i + 2 < n &&
-            !(chars[i] == ']' && chars[i + 1] == ']' && chars[i + 2] == '>') {
+                !(chars[i] == ']' && chars[i + 1] == ']' && chars[i + 2] == '>') {
             text = text + chars[i].to_string()
             i = i + 1
           }
@@ -226,7 +224,10 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           if i < n && chars[i] == '>' {
             i = i + 1
           }
-          let content = input.unsafe_substring(start=start + 2, end=i - 2).trim().to_owned()
+          let content = input
+            .unsafe_substring(start=start + 2, end=i - 2)
+            .trim()
+            .to_owned()
           let parts = collect_iter(content.split(" "))
           let mut name = ""
           let mut system_id = None
@@ -253,7 +254,9 @@ fn parse_xml(input : String) -> Array[XmlToken] {
             }
             j = j + 1
           }
-          tokens.push(XmlToken::StartDoctypeDecl(name, system_id, public_id, inline))
+          tokens.push(
+            XmlToken::StartDoctypeDecl(name, system_id, public_id, inline),
+          )
           tokens.push(XmlToken::EndDoctypeDecl)
         }
       } else {
@@ -284,8 +287,11 @@ fn parse_xml(input : String) -> Array[XmlToken] {
               continue
             }
             let mut aname = ""
-            while i < n && chars[i] != '=' && chars[i] != '>' &&
-              chars[i] != '/' && chars[i] != ' ' {
+            while i < n &&
+                  chars[i] != '=' &&
+                  chars[i] != '>' &&
+                  chars[i] != '/' &&
+                  chars[i] != ' ' {
               aname = aname + chars[i].to_string()
               i = i + 1
             }
@@ -368,7 +374,7 @@ fn parse_attrs(s : String) -> Array[(String, String)] {
 }
 
 ///|
-fn get_attr(attrs : Array[(String, String)], key : String) -> Option[String] {
+fn get_attr(attrs : Array[(String, String)], key : String) -> String? {
   for (k, v) in attrs {
     if k == key {
       return Some(v)
@@ -380,7 +386,7 @@ fn get_attr(attrs : Array[(String, String)], key : String) -> Option[String] {
 // ===== Level Computation =====
 
 ///|
-fn compute_levels(tokens : Array[XmlToken]) -> Array[Int] {
+fn compute_levels(tokens : Array[XmlToken]) -> Array[Int32] {
   let n = tokens.length()
   let levels = Array::make(n, 0)
   let mut lvl = 0
@@ -394,9 +400,7 @@ fn compute_levels(tokens : Array[XmlToken]) -> Array[Int] {
         lvl = lvl - 1
         levels[i] = lvl
       }
-      _ => {
-        levels[i] = lvl
-      }
+      _ => levels[i] = lvl
     }
   }
   levels
@@ -405,7 +409,10 @@ fn compute_levels(tokens : Array[XmlToken]) -> Array[Int] {
 // ===== Content Model Computation =====
 
 ///|
-fn compute_content_models(tokens : Array[XmlToken], levels : Array[Int]) -> Array[Int] {
+fn compute_content_models(
+  tokens : Array[XmlToken],
+  levels : Array[Int32],
+) -> Array[Int32] {
   let n = tokens.length()
   let models = Array::make(n, 0)
   for i in 0..<n {
@@ -420,14 +427,11 @@ fn compute_content_models(tokens : Array[XmlToken], levels : Array[Int]) -> Arra
           }
           if levels[j] == level_i + 1 {
             match tokens[j] {
-              XmlToken::StartElement(_, _) => {
-                eflag = 1
-              }
-              XmlToken::CharacterData(text) => {
+              XmlToken::StartElement(_, _) => eflag = 1
+              XmlToken::CharacterData(text) =>
                 if !is_empty_str(text) {
                   tflag = 2
                 }
-              }
               _ => ()
             }
           }
@@ -443,7 +447,10 @@ fn compute_content_models(tokens : Array[XmlToken], levels : Array[Int]) -> Arra
 // ===== Render =====
 
 ///|
-fn render_attrs(attrs : Array[(String, String)], options : XmlOptions) -> String {
+fn render_attrs(
+  attrs : Array[(String, String)],
+  options : XmlOptions,
+) -> String {
   let mut result = ""
   // Collect names
   let names = []
@@ -497,9 +504,9 @@ pub fn format(xml : String, options : XmlOptions) -> String {
   let out = []
 
   // State
-  let mut preserve_level : Option[Int] = None
-  let mut desc_mixed_level : Option[Int] = None
-  let mut indent_level : Option[Int] = None
+  let mut preserve_level : Int32? = None
+  let mut desc_mixed_level : Int32? = None
+  let mut indent_level : Int32? = None
   let mut cdata_section = false
 
   for i in 0..<n {
@@ -511,22 +518,20 @@ pub fn format(xml : String, options : XmlOptions) -> String {
 
     // descendant_mixed (track state for potential use)
     match token {
-      XmlToken::StartElement(_, _) => {
+      XmlToken::StartElement(_, _) =>
         if (cm == 2 || cm == 3) && desc_mixed_level is None {
           desc_mixed_level = Some(level_i)
         }
-      }
-      XmlToken::EndElement(_) => {
+      XmlToken::EndElement(_) =>
         if desc_mixed_level is Some(v) && v == level_i {
           desc_mixed_level = None
         }
-      }
       _ => ()
     }
 
     // preserve
     let preserve_val = match token {
-      XmlToken::StartElement(name, _) => {
+      XmlToken::StartElement(name, _) =>
         if preserve_level is Some(_) {
           2
         } else if str_contains(options.preserve, name) {
@@ -535,8 +540,7 @@ pub fn format(xml : String, options : XmlOptions) -> String {
         } else {
           0
         }
-      }
-      XmlToken::EndElement(name) => {
+      XmlToken::EndElement(name) =>
         if str_contains(options.preserve, name) &&
           level_i == preserve_level.unwrap_or(-1) {
           preserve_level = None
@@ -546,25 +550,14 @@ pub fn format(xml : String, options : XmlOptions) -> String {
         } else {
           2
         }
-      }
-      _ => {
-        if preserve_level is Some(_) {
-          2
-        } else {
-          0
-        }
-      }
+      _ => if preserve_level is Some(_) { 2 } else { 0 }
     }
 
     // cdata_section tracking
     let cdata_before = cdata_section
     match token {
-      XmlToken::StartCdataSection => {
-        cdata_section = true
-      }
-      XmlToken::EndCdataSection => {
-        cdata_section = false
-      }
+      XmlToken::StartCdataSection => cdata_section = true
+      XmlToken::EndCdataSection => cdata_section = false
       _ => ()
     }
 
@@ -576,7 +569,7 @@ pub fn format(xml : String, options : XmlOptions) -> String {
       let mut j = i - 1
       while j >= 0 && !found {
         match tokens[j] {
-          XmlToken::StartElement(_, _) => {
+          XmlToken::StartElement(_, _) =>
             if levels[j] < level_i {
               if content_models[j] == 1 {
                 result = true
@@ -597,7 +590,6 @@ pub fn format(xml : String, options : XmlOptions) -> String {
                 _ => ()
               }
             }
-          }
           _ => ()
         }
         j = j - 1
@@ -605,7 +597,7 @@ pub fn format(xml : String, options : XmlOptions) -> String {
       result
     } else {
       match token {
-        XmlToken::StartElement(_, _) => {
+        XmlToken::StartElement(_, _) =>
           if cm == 2 || cm == 3 {
             if indent_level is None {
               indent_level = Some(level_i)
@@ -616,8 +608,7 @@ pub fn format(xml : String, options : XmlOptions) -> String {
           } else {
             true
           }
-        }
-        XmlToken::EndElement(_) => {
+        XmlToken::EndElement(_) =>
           if indent_level is Some(v) && v == level_i {
             indent_level = None
             false
@@ -626,7 +617,6 @@ pub fn format(xml : String, options : XmlOptions) -> String {
           } else {
             false
           }
-        }
         _ => indent_level is None
       }
     }
@@ -642,9 +632,7 @@ pub fn format(xml : String, options : XmlOptions) -> String {
         }
         s = s + " encoding=\"" + enc + "\""
         match standalone {
-          Some(true) => {
-            s = s + " standalone=\"yes\""
-          }
+          Some(true) => s = s + " standalone=\"yes\""
           _ => ()
         }
         s = s + "?>"
@@ -703,82 +691,90 @@ pub fn format(xml : String, options : XmlOptions) -> String {
             if options.blanks && !options.compress && text.contains("\n") {
               out.push("\n")
             }
-          } else {
-            if options.correct {
-              let mut s = text
-              s = s.replace_all(old="\r\n", new="\n")
-              s = s.replace_all(old="\r", new=" ")
-              s = s.replace_all(old="\n", new=" ")
-              s = s.replace_all(old="\t", new=" ")
-              while s.contains("  ") {
-                s = s.replace_all(old="  ", new=" ")
-              }
-              // delete leading whitespace if adjacent to StartElement
-              let prev_is_start = if i > 0 {
-                match tokens[i - 1] {
-                  XmlToken::StartElement(_, _) => true
-                  _ => false
-                }
-              } else {
-                false
-              }
-              // Check if all tokens between prev StartElement and this are whitespace
-              let mut can_delete_leading = prev_is_start
-              if !can_delete_leading && i > 0 {
-                // Check if previous tokens are all whitespace CharacterData
-                let mut j = i - 1
-                let mut all_ws = true
-                while j >= 0 {
-                  match tokens[j] {
-                    XmlToken::StartElement(_, _) => { break }
-                    XmlToken::CharacterData(t) => {
-                      if !is_empty_str(t) { all_ws = false; break }
-                    }
-                    _ => { all_ws = false; break }
-                  }
-                  j = j - 1
-                }
-                if all_ws && j >= 0 {
-                  can_delete_leading = true
-                }
-              }
-              if can_delete_leading && s.has_prefix(" ") {
-                s = s.unsafe_substring(start=1, end=s.length())
-              }
-              // delete trailing whitespace if adjacent to EndElement
-              let next_is_end = if i + 1 < n {
-                match tokens[i + 1] {
-                  XmlToken::EndElement(_) => true
-                  _ => false
-                }
-              } else {
-                false
-              }
-              let mut can_delete_trailing = next_is_end
-              if !can_delete_trailing && i + 1 < n {
-                let mut j = i + 1
-                let mut all_ws = true
-                while j < n {
-                  match tokens[j] {
-                    XmlToken::EndElement(_) => { break }
-                    XmlToken::CharacterData(t) => {
-                      if !is_empty_str(t) { all_ws = false; break }
-                    }
-                    _ => { all_ws = false; break }
-                  }
-                  j = j + 1
-                }
-                if all_ws && j < n {
-                  can_delete_trailing = true
-                }
-              }
-              if can_delete_trailing && s.has_suffix(" ") && s.length() > 0 {
-                s = s.unsafe_substring(start=0, end=s.length() - 1)
-              }
-              out.push(s)
-            } else {
-              out.push(text)
+          } else if options.correct {
+            let mut s = text
+            s = s.replace_all(old="\r\n", new="\n")
+            s = s.replace_all(old="\r", new=" ")
+            s = s.replace_all(old="\n", new=" ")
+            s = s.replace_all(old="\t", new=" ")
+            while s.contains("  ") {
+              s = s.replace_all(old="  ", new=" ")
             }
+            // delete leading whitespace if adjacent to StartElement
+            let prev_is_start = if i > 0 {
+              match tokens[i - 1] {
+                XmlToken::StartElement(_, _) => true
+                _ => false
+              }
+            } else {
+              false
+            }
+            // Check if all tokens between prev StartElement and this are whitespace
+            let mut can_delete_leading = prev_is_start
+            if !can_delete_leading && i > 0 {
+              // Check if previous tokens are all whitespace CharacterData
+              let mut j = i - 1
+              let mut all_ws = true
+              while j >= 0 {
+                match tokens[j] {
+                  XmlToken::StartElement(_, _) => break
+                  XmlToken::CharacterData(t) =>
+                    if !is_empty_str(t) {
+                      all_ws = false
+                      break
+                    }
+                  _ => {
+                    all_ws = false
+                    break
+                  }
+                }
+                j = j - 1
+              }
+              if all_ws && j >= 0 {
+                can_delete_leading = true
+              }
+            }
+            if can_delete_leading && s.has_prefix(" ") {
+              s = s.unsafe_substring(start=1, end=s.length())
+            }
+            // delete trailing whitespace if adjacent to EndElement
+            let next_is_end = if i + 1 < n {
+              match tokens[i + 1] {
+                XmlToken::EndElement(_) => true
+                _ => false
+              }
+            } else {
+              false
+            }
+            let mut can_delete_trailing = next_is_end
+            if !can_delete_trailing && i + 1 < n {
+              let mut j = i + 1
+              let mut all_ws = true
+              while j < n {
+                match tokens[j] {
+                  XmlToken::EndElement(_) => break
+                  XmlToken::CharacterData(t) =>
+                    if !is_empty_str(t) {
+                      all_ws = false
+                      break
+                    }
+                  _ => {
+                    all_ws = false
+                    break
+                  }
+                }
+                j = j + 1
+              }
+              if all_ws && j < n {
+                can_delete_trailing = true
+              }
+            }
+            if can_delete_trailing && s.has_suffix(" ") && s.length() > 0 {
+              s = s.unsafe_substring(start=0, end=s.length() - 1)
+            }
+            out.push(s)
+          } else {
+            out.push(text)
           }
         } else {
           out.push(text)
@@ -805,42 +801,28 @@ pub fn format(xml : String, options : XmlOptions) -> String {
         s = s + "<?" + target + " " + data + "?>"
         out.push(s)
       }
-      XmlToken::StartCdataSection => {
-        out.push("<![CDATA[")
-      }
-      XmlToken::EndCdataSection => {
-        out.push("]]>")
-      }
+      XmlToken::StartCdataSection => out.push("<![CDATA[")
+      XmlToken::EndCdataSection => out.push("]]>")
       XmlToken::StartDoctypeDecl(name, system_id, public_id, inline) => {
         let mut s = "<!DOCTYPE " + name
         match public_id {
-          Some(pid) => {
+          Some(pid) =>
             match system_id {
-              Some(sid) => {
-                s = s + " PUBLIC \"" + pid + "\" \"" + sid + "\""
-              }
-              None => {
-                s = s + " PUBLIC \"" + pid + "\""
-              }
+              Some(sid) => s = s + " PUBLIC \"" + pid + "\" \"" + sid + "\""
+              None => s = s + " PUBLIC \"" + pid + "\""
             }
-          }
-          None => {
+          None =>
             match system_id {
-              Some(sid) => {
-                s = s + " SYSTEM \"" + sid + "\""
-              }
+              Some(sid) => s = s + " SYSTEM \"" + sid + "\""
               None => ()
             }
-          }
         }
         if inline {
           s = s + " ["
         }
         out.push(s)
       }
-      XmlToken::EndDoctypeDecl => {
-        out.push(">")
-      }
+      XmlToken::EndDoctypeDecl => out.push(">")
     }
   }
 

@@ -88,18 +88,18 @@ fn main {
   }
 
   let options = @lib.XmlOptions::{
-    indent: indent,
-    indent_char: indent_char,
-    compress: compress,
-    selfclose: selfclose,
-    selfclose_space: selfclose_space,
-    inline: inline,
-    correct: correct,
-    blanks: blanks,
-    eof_newline: eof_newline,
-    preserve: preserve,
-    preserve_attributes: preserve_attributes,
-    encode_attributes: encode_attributes,
+    indent,
+    indent_char,
+    compress,
+    selfclose,
+    selfclose_space,
+    inline,
+    correct,
+    blanks,
+    eof_newline,
+    preserve,
+    preserve_attributes,
+    encode_attributes,
   }
 
   // Determine input files
@@ -142,17 +142,27 @@ fn print_usage() -> Unit {
   eprintln("Usage: xmlfmt [options] [file...]")
   eprintln("")
   eprintln("Options:")
-  eprintln("  -i, --indent <num>            Number of indent chars per level (default: 2)")
-  eprintln("  -I, --indent-char <char>      Indentation character (default: space)")
+  eprintln(
+    "  -i, --indent <num>            Number of indent chars per level (default: 2)",
+  )
+  eprintln(
+    "  -I, --indent-char <char>      Indentation character (default: space)",
+  )
   eprintln("  -c, --compress                Minify output (remove whitespace)")
-  eprintln("  -s, --selfclose               Use self-closing tags for empty elements")
-  eprintln("  -S, --selfclose-space         Add space before /> in self-closing tags")
+  eprintln(
+    "  -s, --selfclose               Use self-closing tags for empty elements",
+  )
+  eprintln(
+    "  -S, --selfclose-space         Add space before /> in self-closing tags",
+  )
   eprintln("  -l, --disable-inlineformatting")
   eprintln("                                Disable inline formatting")
   eprintln("  -C, --disable-correction      Disable whitespace correction")
   eprintln("  -b, --blanks                  Preserve blank lines")
   eprintln("  -n, --eof-newline             Add newline at end of file")
-  eprintln("  -p, --preserve <elems>        Comma-separated elements to preserve whitespace")
+  eprintln(
+    "  -p, --preserve <elems>        Comma-separated elements to preserve whitespace",
+  )
   eprintln("  -a, --preserve-attributes     Preserve attribute order")
   eprintln("  -E, --encode-attributes       Encode > and ' in attribute values")
   eprintln("  -o, --output/--outfile <file> Write output to file")
@@ -171,7 +181,7 @@ fn print_usage() -> Unit {
 }
 
 ///|
-fn parse_int(s : String) -> Int {
+fn parse_int(s : String) -> Int32 {
   let mut result = 0
   let mut neg = false
   let mut i = 0
@@ -187,14 +197,33 @@ fn parse_int(s : String) -> Int {
     }
     i = i + 1
   }
-  if neg { -result } else { result }
+  if neg {
+    -result
+  } else {
+    result
+  }
 }
 
 ///|
+#borrow(buf)
+extern "C" fn read(fd : Int32, buf : Bytes, count : Int32) -> Int32 = "read"
+
+///|
 fn read_stdin() -> String {
-  // Read from stdin using env or file descriptor
-  // MoonBit doesn't have direct stdin read in core; use /dev/stdin
-  @fs.read_file_to_string("/dev/stdin") catch {
-    _ => ""
+  let chunks : Array[Byte] = []
+  let buf_size = 65536
+  while true {
+    let buf = Bytes::make(buf_size, 0)
+    let n = read(0, buf, buf_size)
+    if n <= 0 {
+      break
+    }
+    let mut i = 0
+    while i < n {
+      chunks.push(buf[i])
+      i = i + 1
+    }
   }
+  let bytes = Bytes::from_array(chunks)
+  @unicode.to_utf8_string(bytes)
 }
