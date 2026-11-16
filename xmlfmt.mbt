@@ -13,8 +13,9 @@ priv enum XmlToken {
   ProcessingInstruction(String, String) // target, data
   StartCdataSection
   EndCdataSection
-  StartDoctypeDecl(String, String?, String?, Bool) // name, system_id, public_id, inline
-  EndDoctypeDecl
+  // Verbatim `<!...>` declaration (DOCTYPE, ELEMENT, ENTITY, ATTLIST, ...).
+  // Kept byte-for-byte so nothing the author wrote is lost or rewritten.
+  Declaration(String)
 }
 
 // ===== Options =====
@@ -107,7 +108,7 @@ fn encode_attribute(val : String, encode : Bool) -> String {
 
 ///|
 fn indent_prefix(level : Int32, options : XmlOptions) -> String {
-  if options.compress || options.indent == 0 {
+  if options.compress || options.indent == 0 || level < 0 {
     ""
   } else {
     let n = level * options.indent
@@ -138,18 +139,18 @@ fn parse_xml(input : String) -> Array[XmlToken] {
       if i + 1 < n && chars[i + 1] == '?' {
         // PI or XmlDecl
         i = i + 2
-        let mut target = ""
+        let target = StringBuilder()
         while i < n && chars[i] != ' ' && chars[i] != '?' && chars[i] != '>' {
-          target = target + chars[i].to_string()
+          target.write_char(chars[i])
           i = i + 1
         }
         // Skip space
         while i < n && chars[i] == ' ' {
           i = i + 1
         }
-        let mut data = ""
+        let data = StringBuilder()
         while i < n && chars[i] != '?' && chars[i] != '>' {
-          data = data + chars[i].to_string()
+          data.write_char(chars[i])
           i = i + 1
         }
         if i < n && chars[i] == '?' {
@@ -158,8 +159,8 @@ fn parse_xml(input : String) -> Array[XmlToken] {
         if i < n && chars[i] == '>' {
           i = i + 1
         }
-        if target == "xml" {
-          let attrs = parse_attrs(data)
+        if target.to_string() == "xml" {
+          let attrs = parse_attrs(data.to_string())
           let version = get_attr(attrs, "version").unwrap_or("1.0")
           let encoding = get_attr(attrs, "encoding")
           let standalone = match get_attr(attrs, "standalone") {
@@ -168,24 +169,33 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           }
           tokens.push(XmlToken::XmlDecl(version, encoding, standalone))
         } else {
-          tokens.push(XmlToken::ProcessingInstruction(target, trim_str(data)))
+          tokens.push(
+            XmlToken::ProcessingInstruction(
+              target.to_string(),
+              trim_str(data.to_string()),
+            ),
+          )
         }
-      } else if i + 2 < n && chars[i + 1] == '!' && chars[i + 2] == '-' {
+      } else if i + 3 < n &&
+        chars[i + 1] == '!' &&
+        chars[i + 2] == '-' &&
+        chars[i + 3] == '-' {
         // Comment
         i = i + 4
-        let mut text = ""
+        let text = StringBuilder()
         while i + 2 < n &&
               !(chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>') {
-          text = text + chars[i].to_string()
+          text.write_char(chars[i])
           i = i + 1
         }
         if i + 2 < n {
           i = i + 3
         }
-        tokens.push(XmlToken::Comment(text))
-      } else if i + 8 < n && chars[i + 1] == '!' {
-        // Check for CDATA
-        let is_cdata = chars[i + 2] == '[' &&
+        tokens.push(XmlToken::Comment(text.to_string()))
+      } else if i + 1 < n && chars[i + 1] == '!' {
+        // CDATA or another `<!...>` declaration
+        let is_cdata = i + 8 < n &&
+          chars[i + 2] == '[' &&
           chars[i + 3] == 'C' &&
           chars[i + 4] == 'D' &&
           chars[i + 5] == 'A' &&
@@ -194,20 +204,22 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           chars[i + 8] == '['
         if is_cdata {
           i = i + 9
-          let mut text = ""
+          let text = StringBuilder()
           while i + 2 < n &&
                 !(chars[i] == ']' && chars[i + 1] == ']' && chars[i + 2] == '>') {
-            text = text + chars[i].to_string()
+            text.write_char(chars[i])
             i = i + 1
           }
           if i + 2 < n {
             i = i + 3
           }
           tokens.push(XmlToken::StartCdataSection)
-          tokens.push(XmlToken::CharacterData(text))
+          tokens.push(XmlToken::CharacterData(text.to_string()))
           tokens.push(XmlToken::EndCdataSection)
         } else {
-          // DOCTYPE or other declaration
+          // Any other `<!...>` declaration (DOCTYPE, ELEMENT, ENTITY, ...):
+          // keep it verbatim, including an internal subset `[...]`, whose
+          // contents may themselves contain `>` and nested declarations.
           let start = i
           i = i + 2
           let mut depth = 0
@@ -221,43 +233,16 @@ fn parse_xml(input : String) -> Array[XmlToken] {
             }
             i = i + 1
           }
-          if i < n && chars[i] == '>' {
+          let raw = if i < n {
+            // chars[i] is the closing '>' of the declaration
+            let raw = input.unsafe_substring(start~, end=i + 1)
             i = i + 1
+            raw
+          } else {
+            // Unterminated declaration: keep whatever input remains.
+            input.unsafe_substring(start~, end=n)
           }
-          let content = input
-            .unsafe_substring(start=start + 2, end=i - 2)
-            .trim()
-            .to_owned()
-          let parts = collect_iter(content.split(" "))
-          let mut name = ""
-          let mut system_id = None
-          let mut public_id = None
-          let mut inline = false
-          if parts.length() > 0 {
-            name = parts[0]
-          }
-          let mut j = 1
-          while j < parts.length() {
-            if parts[j] == "PUBLIC" {
-              if j + 1 < parts.length() {
-                public_id = Some(trim_quotes(parts[j + 1]))
-              }
-              if j + 2 < parts.length() {
-                system_id = Some(trim_quotes(parts[j + 2]))
-              }
-            } else if parts[j] == "SYSTEM" {
-              if j + 1 < parts.length() {
-                system_id = Some(trim_quotes(parts[j + 1]))
-              }
-            } else if parts[j] == "[" {
-              inline = true
-            }
-            j = j + 1
-          }
-          tokens.push(
-            XmlToken::StartDoctypeDecl(name, system_id, public_id, inline),
-          )
-          tokens.push(XmlToken::EndDoctypeDecl)
+          tokens.push(XmlToken::Declaration(raw))
         }
       } else {
         // Element start or end
@@ -268,16 +253,16 @@ fn parse_xml(input : String) -> Array[XmlToken] {
         } else {
           false
         }
-        let mut name = ""
+        let name = StringBuilder()
         while i < n && chars[i] != '>' && chars[i] != ' ' && chars[i] != '/' {
-          name = name + chars[i].to_string()
+          name.write_char(chars[i])
           i = i + 1
         }
         if is_end {
           if i < n && chars[i] == '>' {
             i = i + 1
           }
-          tokens.push(XmlToken::EndElement(name))
+          tokens.push(XmlToken::EndElement(name.to_string()))
         } else {
           // Parse attributes
           let attrs = []
@@ -286,13 +271,13 @@ fn parse_xml(input : String) -> Array[XmlToken] {
               i = i + 1
               continue
             }
-            let mut aname = ""
+            let aname = StringBuilder()
             while i < n &&
                   chars[i] != '=' &&
                   chars[i] != '>' &&
                   chars[i] != '/' &&
                   chars[i] != ' ' {
-              aname = aname + chars[i].to_string()
+              aname.write_char(chars[i])
               i = i + 1
             }
             if i < n && chars[i] == '=' {
@@ -300,20 +285,20 @@ fn parse_xml(input : String) -> Array[XmlToken] {
               if i < n && (chars[i] == '"' || chars[i] == '\'') {
                 let quote = chars[i]
                 i = i + 1
-                let mut aval = ""
+                let aval = StringBuilder()
                 while i < n && chars[i] != quote {
-                  aval = aval + chars[i].to_string()
+                  aval.write_char(chars[i])
                   i = i + 1
                 }
                 if i < n && chars[i] == quote {
                   i = i + 1
                 }
-                attrs.push((aname, aval))
+                attrs.push((aname.to_string(), aval.to_string()))
               } else {
-                attrs.push((aname, ""))
+                attrs.push((aname.to_string(), ""))
               }
             } else if !aname.is_empty() {
-              attrs.push((aname, ""))
+              attrs.push((aname.to_string(), ""))
             }
           }
           let selfclose = if i < n && chars[i] == '/' {
@@ -326,21 +311,21 @@ fn parse_xml(input : String) -> Array[XmlToken] {
             i = i + 1
           }
           if selfclose {
-            tokens.push(XmlToken::StartElement(name, attrs))
-            tokens.push(XmlToken::EndElement(name))
+            tokens.push(XmlToken::StartElement(name.to_string(), attrs))
+            tokens.push(XmlToken::EndElement(name.to_string()))
           } else {
-            tokens.push(XmlToken::StartElement(name, attrs))
+            tokens.push(XmlToken::StartElement(name.to_string(), attrs))
           }
         }
       }
     } else {
       // Character data
-      let mut text = ""
+      let text = StringBuilder()
       while i < n && chars[i] != '<' {
-        text = text + chars[i].to_string()
+        text.write_char(chars[i])
         i = i + 1
       }
-      tokens.push(XmlToken::CharacterData(text))
+      tokens.push(XmlToken::CharacterData(text.to_string()))
     }
   }
   tokens
@@ -397,7 +382,11 @@ fn compute_levels(tokens : Array[XmlToken]) -> Array[Int32] {
         lvl = lvl + 1
       }
       XmlToken::EndElement(_) => {
-        lvl = lvl - 1
+        // A stray closing tag can drive the running level below zero; clamp it
+        // so a negative indent width never reaches `String::make` (which aborts).
+        if lvl > 0 {
+          lvl = lvl - 1
+        }
         levels[i] = lvl
       }
       _ => levels[i] = lvl
@@ -501,6 +490,16 @@ pub fn format(xml : String, options : XmlOptions) -> String {
   let levels = compute_levels(tokens)
   let content_models = compute_content_models(tokens, levels)
 
+  // Most recent start-element index seen at each level; used by the inline
+  // indent rule instead of an O(n) backward scan per token.
+  let mut max_level = 0
+  for lvl in levels {
+    if lvl > max_level {
+      max_level = lvl
+    }
+  }
+  let last_start : Array[Int32] = Array::make(max_level + 1, -1)
+
   let out = []
 
   // State
@@ -563,38 +562,30 @@ pub fn format(xml : String, options : XmlOptions) -> String {
 
     // indent determination
     let indent_val = if options.inline {
-      // token_indent_inline: look backward
-      let mut result = true
-      let mut found = false
-      let mut j = i - 1
-      while j >= 0 && !found {
-        match tokens[j] {
-          XmlToken::StartElement(_, _) =>
-            if levels[j] < level_i {
-              if content_models[j] == 1 {
-                result = true
-              } else {
-                result = false
-              }
-              found = true
-            } else if levels[j] == level_i {
-              match token {
-                XmlToken::EndElement(_) => {
-                  if content_models[j] == 1 {
-                    result = true
-                  } else {
-                    result = false
-                  }
-                  found = true
-                }
-                _ => ()
-              }
-            }
-          _ => ()
-        }
-        j = j - 1
+      // token_indent_inline: the original implementation scanned backward for
+      // the nearest previous start element, which is O(n) per token and made
+      // flat documents quadratic. The scan accepts the nearest start element
+      // with a level below `level_i` (and, for end tags, one at the same
+      // level), so it is equivalent to a max-index lookup over
+      // `last_start[0..bound]`, done here in O(depth).
+      let bound = match token {
+        XmlToken::EndElement(_) => level_i
+        _ => level_i - 1
       }
-      result
+      let mut best = -1
+      let mut l = 0
+      while l <= bound && l <= max_level {
+        let c = last_start[l]
+        if c > best {
+          best = c
+        }
+        l = l + 1
+      }
+      if best < 0 {
+        true
+      } else {
+        content_models[best] == 1
+      }
     } else {
       match token {
         XmlToken::StartElement(_, _) =>
@@ -640,6 +631,9 @@ pub fn format(xml : String, options : XmlOptions) -> String {
         out.push("\n")
       }
       XmlToken::StartElement(name, attrs) => {
+        // Record after the indent lookup above so the element does not match
+        // itself (the original backward scan started at i - 1).
+        last_start[level_i] = i
         let mut s = ""
         if preserve_val != 2 && indent_val && level_i > 0 {
           s = s + indent_prefix(level_i, options)
@@ -803,26 +797,7 @@ pub fn format(xml : String, options : XmlOptions) -> String {
       }
       XmlToken::StartCdataSection => out.push("<![CDATA[")
       XmlToken::EndCdataSection => out.push("]]>")
-      XmlToken::StartDoctypeDecl(name, system_id, public_id, inline) => {
-        let mut s = "<!DOCTYPE " + name
-        match public_id {
-          Some(pid) =>
-            match system_id {
-              Some(sid) => s = s + " PUBLIC \"" + pid + "\" \"" + sid + "\""
-              None => s = s + " PUBLIC \"" + pid + "\""
-            }
-          None =>
-            match system_id {
-              Some(sid) => s = s + " SYSTEM \"" + sid + "\""
-              None => ()
-            }
-        }
-        if inline {
-          s = s + " ["
-        }
-        out.push(s)
-      }
-      XmlToken::EndDoctypeDecl => out.push(">")
+      XmlToken::Declaration(raw) => out.push(raw)
     }
   }
 

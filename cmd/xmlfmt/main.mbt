@@ -225,5 +225,5 @@ fn read_stdin() -> String {
     }
   }
   let bytes = Bytes::from_array(chunks)
-  @unicode.to_utf8_string(bytes)
+  @utf8.decode_lossy(bytes)
 }

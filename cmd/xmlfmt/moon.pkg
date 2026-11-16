@@ -1,8 +1,8 @@
 import {
   "kupas/xmlfmt" @lib,
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/x/fs",
-  "moonbitlang/x/unicode",
 }
 
 pkgtype(kind: "executable")

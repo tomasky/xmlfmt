@@ -1,6 +1,6 @@
 name = "kupas/xmlfmt"
 
-version = "0.1.4"
+version = "0.1.5"
 
 readme = "README.mbt.md"
 
@@ -15,5 +15,5 @@ preferred_target = "native"
 description = "An XML formatter written in MoonBit, ported from python xmlformatter."
 
 import {
-  "moonbitlang/x@0.5.5",
+  "moonbitlang/x@0.5.7",
 }

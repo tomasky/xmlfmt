@@ -1,0 +1,31 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "kupas/xmlfmt"
+
+// Values
+pub fn default_options() -> XmlOptions
+
+pub fn format(String, XmlOptions) -> String
+
+pub fn format_default(String) -> String
+
+// Errors
+
+// Types and methods
+pub(all) struct XmlOptions {
+  indent : Int32
+  indent_char : String
+  compress : Bool
+  selfclose : Bool
+  selfclose_space : Bool
+  inline : Bool
+  correct : Bool
+  blanks : Bool
+  eof_newline : Bool
+  preserve : Array[String]
+  preserve_attributes : Bool
+  encode_attributes : Bool
+}
+
+// Type aliases
+
+// Traits

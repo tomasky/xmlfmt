@@ -12,6 +12,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const https = require("https");
 const http = require("http");
 
@@ -103,6 +104,70 @@ async function download(target, dest) {
   return url;
 }
 
+// Fetch a small body as text (used for checksum files).
+function fetchText(url) {
+  return fetch(url, 0).then(
+    (res) =>
+      new Promise((resolve, reject) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolve(body));
+        res.on("error", reject);
+      })
+  );
+}
+
+function sha256File(file) {
+  return crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(file))
+    .digest("hex");
+}
+
+// Pull the expected hash for `assetName` out of a sha256sum-style file
+// ("<hex>  <name>"); the published name differs from the local dest path.
+function expectedHash(checksumBody, assetName) {
+  for (const line of checksumBody.split(/\r?\n/)) {
+    const m = line.match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/);
+    if (m && m[2].trim() === assetName) {
+      return m[1].toLowerCase();
+    }
+  }
+  return null;
+}
+
+// Verify a downloaded binary against its published `<url>.sha256`.
+// Mirrors install.sh: a missing checksum file only warns, a mismatch is
+// fatal and deletes the downloaded file so it cannot be executed.
+async function verifyChecksum(target, dest, log = () => {}) {
+  const asset = `xmlfmt-${target}`;
+  const url = `${downloadUrl(target)}.sha256`;
+  let body;
+  try {
+    body = await fetchText(url);
+  } catch (err) {
+    log(`xmlfmt: warning: no checksum published (${url}), skipping verification`);
+    return;
+  }
+  const expected = expectedHash(body, asset);
+  if (!expected) {
+    log(`xmlfmt: warning: checksum file does not list ${asset}, skipping verification`);
+    return;
+  }
+  const actual = sha256File(dest);
+  if (actual !== expected) {
+    try {
+      fs.unlinkSync(dest);
+    } catch {}
+    throw new Error(
+      `checksum mismatch for ${asset}: expected ${expected}, got ${actual}; ` +
+        `the downloaded file was deleted`
+    );
+  }
+  log(`xmlfmt: checksum verified for ${asset}`);
+}
+
 async function ensureBinary({ force = false, log = () => {} } = {}) {
   const dest = binaryPath();
 
@@ -125,6 +190,7 @@ async function ensureBinary({ force = false, log = () => {} } = {}) {
 
   log(`xmlfmt: downloading ${downloadUrl(target)}`);
   await download(target, dest);
+  await verifyChecksum(target, dest, log);
   log(`xmlfmt: installed ${dest}`);
   return dest;
 }
@@ -137,4 +203,7 @@ module.exports = {
   binaryPath,
   isInstalled,
   ensureBinary,
+  verifyChecksum,
+  expectedHash,
+  sha256File,
 };
