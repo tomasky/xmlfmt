@@ -127,9 +127,9 @@ fn main {
 
   for file in files {
     let content : String? = if file == "-" {
-      Some(read_stdin())
+      Some(@lib.decode_input(read_stdin_bytes()))
     } else {
-      Some(@fs.read_file_to_string(file)) catch {
+      Some(@lib.decode_input(@fs.read_file_to_bytes(file))) catch {
         _ => {
           eprintln("xmlfmt: cannot read \{file}")
           had_error = true
@@ -250,7 +250,7 @@ fn parse_int(s : String) -> Int32 {
 extern "C" fn read(fd : Int32, buf : Bytes, count : Int32) -> Int32 = "read"
 
 ///|
-fn read_stdin() -> String {
+fn read_stdin_bytes() -> Bytes {
   let chunks : Array[Byte] = []
   let buf_size = 65536
   while true {
@@ -265,6 +265,5 @@ fn read_stdin() -> String {
       i = i + 1
     }
   }
-  let bytes = Bytes::from_array(chunks)
-  @utf8.decode_lossy(bytes)
+  Bytes::from_array(chunks)
 }

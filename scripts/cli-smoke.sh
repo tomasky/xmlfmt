@@ -107,6 +107,22 @@ assert_stdout_equals "<root><a/></root>" "compress output (minified, empty eleme
 run "selfclose-space" 0 -- -s -S "$TMP/in.xml"
 assert_stdout_equals $'<root>\n  <a />\n</root>' "selfclose-space output"
 
+# Start tags spread over several lines keep their attributes: only ' '
+# separated attributes before, so newlines leaked into attribute names.
+printf '<root\n  a="1"\n  b="2"\n>\n  <c/>\n</root>' >"$TMP/multiline.xml"
+run "multi-line start tag" 0 -- "$TMP/multiline.xml"
+assert_stdout_equals $'<root a="1" b="2">\n  <c></c>\n</root>' "multi-line start tag attributes"
+
+# UTF-16 documents (Windows tools, some editors) must not come out as mojibake.
+python3 - "$TMP/utf16.xml" <<'PYEOF' 2>/dev/null || printf '' >"$TMP/utf16.xml"
+import sys
+open(sys.argv[1], "wb").write("<r><a>x</a></r>".encode("utf-16"))
+PYEOF
+if [ -s "$TMP/utf16.xml" ]; then
+  run "UTF-16 input" 0 -- "$TMP/utf16.xml"
+  assert_stdout_equals $'<r>\n  <a>x</a>\n</r>' "UTF-16 input decoded"
+fi
+
 run "overwrite" 0 -- -w "$TMP/in.xml"
 if [ "$(cat "$TMP/in.xml")" = $'<root>\n  <a></a>\n</root>' ]; then
   pass "overwrite rewrites the input file"

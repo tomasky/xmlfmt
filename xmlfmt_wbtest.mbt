@@ -12,18 +12,6 @@ test "is_empty_str accepts whitespace-only and empty strings" {
 }
 
 ///|
-test "trim_quotes strips matching outer quotes only" {
-  assert_eq(trim_quotes("\"v\""), "v")
-  assert_eq(trim_quotes("'v'"), "v")
-  // Mismatched quotes are kept
-  assert_eq(trim_quotes("\"v'"), "\"v'")
-  // A single quote character is kept
-  assert_eq(trim_quotes("\""), "\"")
-  // Inner quotes survive
-  assert_eq(trim_quotes("\"a\\\"b\""), "a\\\"b")
-}
-
-///|
 test "encode_attribute escapes entities" {
   // & and < are always encoded
   assert_eq(encode_attribute("a&b", false), "a&amp;b")
@@ -62,6 +50,17 @@ test "parse_attrs reads space-separated key=value pairs" {
   // Values without quotes parse; bare keys without '=' are dropped
   assert_eq(parse_attrs("a=b c"), [("a", "b")])
   assert_eq(parse_attrs(""), [])
+  // Any whitespace separates attributes, so a declaration wrapped over
+  // several lines still yields clean names and values.
+  assert_eq(
+    parse_attrs("version=\"1.0\"\n  encoding=\"UTF-8\"\tstandalone=\"yes\""),
+    [("version", "1.0"), ("encoding", "UTF-8"), ("standalone", "yes")],
+  )
+  // Quoted values may contain whitespace and '='; whitespace around '=' is ok.
+  assert_eq(parse_attrs("a = \"x y\" b=\"2\""), [("a", "x y"), ("b", "2")])
+  assert_eq(parse_attrs("k=\"a=b\""), [("k", "a=b")])
+  // Single-quoted values are handled too
+  assert_eq(parse_attrs("k='v w'"), [("k", "v w")])
 }
 
 ///|
@@ -124,4 +123,36 @@ test "parser reports self-closing elements as a start/end pair" {
     tokens[0] is XmlToken::StartElement(_, _) &&
     tokens[1] is XmlToken::EndElement(_),
   )
+}
+
+///|
+test "parser keeps attributes of start tags wrapped over several lines" {
+  // Regression: only ' ' separated attributes, so newlines and tabs inside a
+  // start tag were swallowed into attribute names and emitted as junk
+  // (`<root\n ="" a="1">`).
+  let tokens = parse_xml("<root\n   a=\"1\"\n   b=\"2\"\n>\n  <c/>\n</root>")
+  match tokens[0] {
+    XmlToken::StartElement(name, attrs) => {
+      assert_eq(name, "root")
+      assert_eq(attrs, [("a", "1"), ("b", "2")])
+    }
+    _ => fail("expected a StartElement token")
+  }
+  // An end tag with whitespace before '>' keeps its clean name
+  match parse_xml("</root\n>")[0] {
+    XmlToken::EndElement(name) => assert_eq(name, "root")
+    _ => fail("expected an EndElement token")
+  }
+}
+
+///|
+test "parser splits an XML declaration wrapped over several lines" {
+  let tokens = parse_xml("<?xml\n version=\"1.0\"\n encoding=\"UTF-8\"?><a/>")
+  match tokens[0] {
+    XmlToken::XmlDecl(version, encoding, _) => {
+      assert_eq(version, "1.0")
+      assert_eq(encoding, Some("UTF-8"))
+    }
+    _ => fail("expected an XmlDecl token")
+  }
 }

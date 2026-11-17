@@ -169,6 +169,19 @@ and their descendants (e.g., `<pre>`, `<code>`, `<script>`):
 xmlfmt -p "pre,code,script" input.xml
 ```
 
+### Input Encoding
+
+xmlfmt decodes the input itself, so files that are not UTF-8 still format
+correctly:
+
+- UTF-8, with or without a BOM
+- UTF-16 (LE/BE), with a BOM or detected from the zero bytes of `<?xml`
+- anything else is read as Latin-1, so a byte like `0xE9` becomes `é` instead
+  of a replacement character
+
+Output is always UTF-8; the `encoding` attribute in the XML declaration is
+preserved as written.
+
 ### Attribute Handling
 
 - By default, attributes are sorted alphabetically

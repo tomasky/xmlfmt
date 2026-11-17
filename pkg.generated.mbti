@@ -2,7 +2,9 @@
 package "kupas/xmlfmt"
 
 // Values
-pub const VERSION : String = "0.1.6"
+pub const VERSION : String = "0.1.7"
+
+pub fn decode_input(Bytes) -> String
 
 pub fn default_options() -> XmlOptions
 

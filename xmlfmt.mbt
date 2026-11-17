@@ -83,17 +83,6 @@ fn str_contains(arr : Array[String], val : String) -> Bool {
 }
 
 ///|
-fn trim_quotes(s : String) -> String {
-  if s.length() > 1 && s.has_prefix("\"") && s.has_suffix("\"") {
-    s.unsafe_substring(start=1, end=s.length() - 1)
-  } else if s.length() > 1 && s.has_prefix("'") && s.has_suffix("'") {
-    s.unsafe_substring(start=1, end=s.length() - 1)
-  } else {
-    s
-  }
-}
-
-///|
 fn encode_attribute(val : String, encode : Bool) -> String {
   let mut v = val
   v = v.replace_all(old="&", new="&amp;")
@@ -126,6 +115,111 @@ fn trim_str(s : String) -> String {
   s.trim().to_owned()
 }
 
+// ===== Input decoding =====
+
+///|
+/// Append the UTF-8 encoding of `cp` to `out`.
+fn push_utf8(out : Array[Byte], cp : Int32) -> Unit {
+  if cp < 0x80 {
+    out.push(cp.to_byte())
+  } else if cp < 0x800 {
+    out.push((0xC0 | (cp >> 6)).to_byte())
+    out.push((0x80 | (cp & 0x3F)).to_byte())
+  } else if cp < 0x10000 {
+    out.push((0xE0 | (cp >> 12)).to_byte())
+    out.push((0x80 | ((cp >> 6) & 0x3F)).to_byte())
+    out.push((0x80 | (cp & 0x3F)).to_byte())
+  } else {
+    out.push((0xF0 | (cp >> 18)).to_byte())
+    out.push((0x80 | ((cp >> 12) & 0x3F)).to_byte())
+    out.push((0x80 | ((cp >> 6) & 0x3F)).to_byte())
+    out.push((0x80 | (cp & 0x3F)).to_byte())
+  }
+}
+
+///|
+fn decode_utf16(bytes : Bytes, start : Int32, little_endian : Bool) -> String {
+  let out : Array[Byte] = []
+  let n = bytes.length()
+  let mut i = start
+  let mut high : Int32 = -1
+  while i + 1 < n {
+    let b0 = bytes[i].to_int()
+    let b1 = bytes[i + 1].to_int()
+    let unit = if little_endian { b0 | (b1 << 8) } else { (b0 << 8) | b1 }
+    i = i + 2
+    if unit >= 0xD800 && unit <= 0xDBFF {
+      // High surrogate: pair it with the low surrogate that follows.
+      if high >= 0 {
+        push_utf8(out, 0xFFFD)
+      }
+      high = unit
+      continue
+    }
+    if unit >= 0xDC00 && unit <= 0xDFFF {
+      if high >= 0 {
+        push_utf8(out, 0x10000 + ((high - 0xD800) << 10) + (unit - 0xDC00))
+        high = -1
+      } else {
+        push_utf8(out, 0xFFFD)
+      }
+      continue
+    }
+    if high >= 0 {
+      push_utf8(out, 0xFFFD)
+      high = -1
+    }
+    push_utf8(out, unit)
+  }
+  if high >= 0 {
+    push_utf8(out, 0xFFFD)
+  }
+  @utf8.decode_lossy(Bytes::from_array(out))
+}
+
+///|
+fn decode_latin1(bytes : Bytes) -> String {
+  let out : Array[Byte] = []
+  for i in 0..<bytes.length() {
+    push_utf8(out, bytes[i].to_int())
+  }
+  @utf8.decode_lossy(Bytes::from_array(out))
+}
+
+///|
+/// Decode raw document bytes into a `String`.
+///
+/// XML files in the wild are not always UTF-8: editors and Windows tools save
+/// UTF-16 with a BOM, and ISO-8859-1/CP1252 shows up in older documents.
+/// Decoding those as UTF-8 produces mojibake (or, with a lossy decoder, a
+/// document full of U+FFFD), so sniff the encoding first:
+///
+/// - UTF-16 with a BOM, or UTF-16 without one but with the zero bytes that
+///   `<?xml` produces in that encoding;
+/// - UTF-8, with or without a BOM;
+/// - anything else is read as Latin-1, which at least keeps every byte
+///   distinguishable instead of replacing it with U+FFFD.
+pub fn decode_input(bytes : Bytes) -> String {
+  let n = bytes.length()
+  let b0 = if n > 0 { bytes[0].to_int() } else { 0 }
+  let b1 = if n > 1 { bytes[1].to_int() } else { 0 }
+  if n >= 2 && b0 == 0xFF && b1 == 0xFE {
+    return decode_utf16(bytes, 2, true)
+  }
+  if n >= 2 && b0 == 0xFE && b1 == 0xFF {
+    return decode_utf16(bytes, 2, false)
+  }
+  if n >= 4 && b0 == 0x00 && b1 == 0x3C {
+    return decode_utf16(bytes, 0, false)
+  }
+  if n >= 4 && b0 == 0x3C && b1 == 0x00 {
+    return decode_utf16(bytes, 0, true)
+  }
+  @utf8.decode(bytes, ignore_bom=true) catch {
+    _ => decode_latin1(bytes)
+  }
+}
+
 // ===== Parser =====
 
 ///|
@@ -140,12 +234,15 @@ fn parse_xml(input : String) -> Array[XmlToken] {
         // PI or XmlDecl
         i = i + 2
         let target = StringBuilder()
-        while i < n && chars[i] != ' ' && chars[i] != '?' && chars[i] != '>' {
+        while i < n &&
+              !is_whitespace(chars[i]) &&
+              chars[i] != '?' &&
+              chars[i] != '>' {
           target.write_char(chars[i])
           i = i + 1
         }
-        // Skip space
-        while i < n && chars[i] == ' ' {
+        // Skip the whitespace separating the target from the data
+        while i < n && is_whitespace(chars[i]) {
           i = i + 1
         }
         let data = StringBuilder()
@@ -254,7 +351,10 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           false
         }
         let name = StringBuilder()
-        while i < n && chars[i] != '>' && chars[i] != ' ' && chars[i] != '/' {
+        while i < n &&
+              chars[i] != '>' &&
+              !is_whitespace(chars[i]) &&
+              chars[i] != '/' {
           name.write_char(chars[i])
           i = i + 1
         }
@@ -264,10 +364,11 @@ fn parse_xml(input : String) -> Array[XmlToken] {
           }
           tokens.push(XmlToken::EndElement(name.to_string()))
         } else {
-          // Parse attributes
+          // Parse attributes. Any ASCII whitespace separates attributes, so
+          // start tags wrapped over several lines keep their attributes.
           let attrs = []
           while i < n && chars[i] != '>' && chars[i] != '/' {
-            if chars[i] == ' ' {
+            if is_whitespace(chars[i]) {
               i = i + 1
               continue
             }
@@ -276,8 +377,12 @@ fn parse_xml(input : String) -> Array[XmlToken] {
                   chars[i] != '=' &&
                   chars[i] != '>' &&
                   chars[i] != '/' &&
-                  chars[i] != ' ' {
+                  !is_whitespace(chars[i]) {
               aname.write_char(chars[i])
+              i = i + 1
+            }
+            // Whitespace is allowed around the `=` of an attribute.
+            while i < n && is_whitespace(chars[i]) {
               i = i + 1
             }
             if i < n && chars[i] == '=' {
@@ -332,27 +437,56 @@ fn parse_xml(input : String) -> Array[XmlToken] {
 }
 
 ///|
-fn collect_iter(iter : Iter[StringView]) -> Array[String] {
-  let arr = []
-  for v in iter {
-    arr.push(v.to_owned())
-  }
-  arr
-}
-
-///|
+/// Parse the attribute text of a processing instruction, respecting quotes
+/// so that a value may itself contain whitespace.
 fn parse_attrs(s : String) -> Array[(String, String)] {
   let attrs = []
-  let parts = collect_iter(s.trim().to_owned().split(" "))
-  for part in parts {
-    let kv = part.split_once("=")
-    match kv {
-      Some((k, v)) => {
-        let key = trim_str(k.to_owned())
-        let val = trim_quotes(trim_str(v.to_owned()))
-        attrs.push((key, val))
+  let chars = s.to_array()
+  let n = chars.length()
+  let mut i = 0
+  while i < n {
+    while i < n && is_whitespace(chars[i]) {
+      i = i + 1
+    }
+    if i >= n {
+      break
+    }
+    let key = StringBuilder()
+    while i < n && chars[i] != '=' && !is_whitespace(chars[i]) {
+      key.write_char(chars[i])
+      i = i + 1
+    }
+    while i < n && is_whitespace(chars[i]) {
+      i = i + 1
+    }
+    let mut has_eq = false
+    if i < n && chars[i] == '=' {
+      has_eq = true
+      i = i + 1
+      while i < n && is_whitespace(chars[i]) {
+        i = i + 1
       }
-      None => ()
+    }
+    let val = StringBuilder()
+    if has_eq && i < n && (chars[i] == '"' || chars[i] == '\'') {
+      let quote = chars[i]
+      i = i + 1
+      while i < n && chars[i] != quote {
+        val.write_char(chars[i])
+        i = i + 1
+      }
+      if i < n && chars[i] == quote {
+        i = i + 1
+      }
+    } else if has_eq {
+      while i < n && !is_whitespace(chars[i]) {
+        val.write_char(chars[i])
+        i = i + 1
+      }
+    }
+    // A bare word without '=' is not an attribute; drop it.
+    if has_eq {
+      attrs.push((key.to_string(), val.to_string()))
     }
   }
   attrs
@@ -817,4 +951,4 @@ pub fn format_default(xml : String) -> String {
 ///|
 /// Version of the library and of the `xmlfmt` CLI. Keep it in sync with
 /// `moon.mod` and `npmjs/package.json` when releasing.
-pub const VERSION : String = "0.1.6"
+pub const VERSION : String = "0.1.7"
