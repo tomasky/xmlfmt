@@ -219,6 +219,10 @@ fn print_usage() -> Unit {
   println("  xmlfmt -o out.xml input.xml         Write to file")
   println("  xmlfmt -w input.xml                 Overwrite in place")
   println("  cat input.xml | xmlfmt -            Read from stdin")
+  println("")
+  // Name the exact build: when a stale or shadowed binary is in play, `--help`
+  // alone is then enough to tell which version answered.
+  println("xmlfmt \{@lib.VERSION}")
 }
 
 ///|

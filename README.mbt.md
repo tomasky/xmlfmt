@@ -32,6 +32,11 @@ moon install kupas/xmlfmt/cmd/xmlfmt
 This builds from source using the MoonBit toolchain and installs the `xmlfmt`
 binary to `~/.moon/bin`.
 
+Linux releases come in two flavours: statically linked against musl
+(`xmlfmt-linux-x86_64`, portable everywhere) and linked against glibc
+(`xmlfmt-linux-x86_64-gnu`). The npm wrapper and `install.sh` pick the glibc
+build on glibc systems and fall back to musl.
+
 ### As a CLI (prebuilt binary)
 
 ```bash

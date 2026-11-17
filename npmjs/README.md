@@ -71,9 +71,44 @@ matches) and replaced on the next run, with a note on stderr:
 xmlfmt: installed binary is for 0.1.5, this package is 0.1.8; fetching the matching binary
 ```
 
-So `xmlfmt --version` always reports the version you upgraded to. If a run
-still shows an older version, the file being executed is not this package:
-check `which -a xmlfmt`.
+The wrapper also asks the binary for `--version` on every run. A binary that
+reports a different version than the package is replaced before it is used, and
+a release asset that reports the wrong version is rejected with an error instead
+of being run:
+
+```
+xmlfmt: /path/bin/xmlfmt reports 0.1.5, this package is 0.1.9; reinstalling the matching binary
+xmlfmt: the downloaded binary reports 0.1.5 but this package is 0.1.9; the release asset for v0.1.9 is stale or built from another commit
+```
+
+So `xmlfmt --version` always reports the version you installed. If a run still
+shows an older version, the file being executed is not this package: check
+`which -a xmlfmt`.
+
+## Linux builds: glibc and musl
+
+Each Linux release ships two builds: `xmlfmt-linux-<arch>` (statically linked
+against musl, portable everywhere) and `xmlfmt-linux-<arch>-gnu` (linked against
+glibc). On a glibc machine the wrapper tries the glibc build first and falls
+back to the musl one if it is not published, because some hardened hosts kill
+the static musl binary before it can print anything.
+
+## If the tool prints nothing
+
+A native binary that dies before it can print (wrong architecture, `SIGSEGV`
+from an incompatible build, a seccomp policy that blocks a syscall) used to look
+like a silent no-op. It is now reported:
+
+```
+xmlfmt: /path/bin/xmlfmt was killed by SIGSEGV before it produced output
+xmlfmt: this is usually a binary that does not match this machine (uname -m: x64) ...
+```
+
+Run the binary directly to confirm, and include the signal name when reporting:
+
+```bash
+"$(npm root -g)/@tomasko/xmlfmt/bin/xmlfmt" --help; echo "exit=$?"
+```
 
 ## Overrides
 

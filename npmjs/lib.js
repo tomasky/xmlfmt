@@ -12,6 +12,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const crypto = require("crypto");
 const https = require("https");
 const http = require("http");
@@ -24,6 +25,33 @@ const TARGETS = {
   "darwin-arm64": "darwin-aarch64",
   "darwin-x64": "darwin-x86_64",
 };
+
+// glibc version of the running process ("2.35"), or null on musl/macOS. A
+// statically linked musl build is the portable default, but on some hosts it
+// dies before `main` (seccomp filters, hardened kernels), so a glibc build is
+// preferred where glibc is what the machine actually uses.
+function glibcVersion() {
+  try {
+    const report = process.report && process.report.getReport();
+    const header = report && report.header;
+    return (header && header.glibcVersionRuntime) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Candidate assets for this machine, most appropriate first.
+function targetCandidates(glibc) {
+  const target = targetName();
+  if (!target) return [];
+  const hasGlibc = glibc === undefined || glibc === null
+    ? glibcVersion() !== null
+    : Boolean(glibc);
+  if (process.platform === "linux" && hasGlibc) {
+    return [`${target}-gnu`, target];
+  }
+  return [target];
+}
 
 function repoSlug(repo) {
   if (!repo) return null;
@@ -75,6 +103,53 @@ function readStamp(dir) {
 function writeStamp(dir, version) {
   fs.mkdirSync(path.dirname(stampPath(dir)), { recursive: true });
   fs.writeFileSync(stampPath(dir), `${version}\n`);
+}
+
+// Run `bin --version` and report what happened. A binary that cannot run at
+// all (wrong architecture, killed on startup, missing loader) must not be
+// mistaken for one that merely answered oddly: the caller needs the reason to
+// explain the failure instead of doing nothing.
+//
+// Stdin is ignored and the call is time-limited because binaries up to 0.1.5
+// answered `--version` with "Unknown option" and then waited on stdin.
+function probe(bin) {
+  let res;
+  try {
+    res = spawnSync(bin, ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+    });
+  } catch (err) {
+    return { version: null, reason: `cannot be executed: ${err.message}` };
+  }
+  if (res.error) {
+    return { version: null, reason: `cannot be executed: ${res.error.message}` };
+  }
+  if (res.signal) {
+    return { version: null, reason: `was killed by ${res.signal}` };
+  }
+  if (res.status !== 0) {
+    const detail = (res.stderr || "").trim().split("\n")[0];
+    return {
+      version: null,
+      reason: `exited with status ${res.status}${detail ? `: ${detail}` : ""}`,
+    };
+  }
+  const m = (res.stdout || "").trim().match(/^xmlfmt\s+(\S+)$/);
+  if (!m) {
+    const detail = (res.stderr || "").trim().split("\n")[0];
+    return {
+      version: null,
+      reason: `did not report a version${detail ? ` (${detail})` : ""}`,
+    };
+  }
+  return { version: m[1], reason: null, binary: bin };
+}
+
+// What the binary itself reports, e.g. "0.1.9", or null when it cannot run.
+function probeVersion(bin) {
+  return probe(bin).version;
 }
 
 // True when a binary is present *and* was downloaded for this package version.
@@ -193,7 +268,7 @@ async function verifyChecksum(target, dest, log = () => {}) {
   log(`xmlfmt: checksum verified for ${asset}`);
 }
 
-async function ensureBinary({ force = false, log = () => {}, dir } = {}) {
+async function ensureBinary({ force = false, log = () => {}, dir, glibc } = {}) {
   const dest = binaryPath(dir);
   const stale = (() => {
     try {
@@ -205,7 +280,16 @@ async function ensureBinary({ force = false, log = () => {}, dir } = {}) {
   })();
 
   if (!force && !process.env.XMLFMT_FORCE_DOWNLOAD && isInstalled(dir)) {
-    return dest;
+    // The stamp is written by this wrapper, but a tarball, an image layer or a
+    // manual copy can still put a different binary in place. Ask the binary.
+    const probed = probe(dest);
+    if (probed.version === pkg.version) {
+      return dest;
+    }
+    log(
+      `xmlfmt: ${dest} ${probed.reason || `reports ${probed.version}`}, this ` +
+        `package is ${pkg.version}; reinstalling the matching binary`
+    );
   }
 
   if (process.env.XMLFMT_SKIP_DOWNLOAD) {
@@ -223,20 +307,60 @@ async function ensureBinary({ force = false, log = () => {}, dir } = {}) {
     );
   }
 
-  const target = targetName();
-  if (!target) {
+  const candidates = targetCandidates(glibc);
+  if (candidates.length === 0) {
     throw new Error(
       `unsupported platform ${process.platform}-${process.arch}; xmlfmt ` +
         `supports linux-x64, linux-arm64, darwin-arm64 and darwin-x64`
     );
   }
 
-  log(`xmlfmt: downloading ${downloadUrl(target)}`);
-  await download(target, dest);
-  await verifyChecksum(target, dest, log);
-  writeStamp(dir, pkg.version);
-  log(`xmlfmt: installed ${dest}`);
-  return dest;
+  // Try each candidate asset until one runs. A binary that downloads and
+  // verifies but cannot execute here (static musl on a host that refuses it) is
+  // not a corrupt download, so the next candidate is tried before giving up.
+  const reasons = [];
+  for (const target of candidates) {
+    log(`xmlfmt: downloading ${downloadUrl(target)}`);
+    try {
+      await download(target, dest);
+      await verifyChecksum(target, dest, log);
+    } catch (err) {
+      // A missing asset is expected while a new build is being rolled out; a
+      // checksum mismatch is not, and must not be papered over.
+      if (/checksum mismatch/.test(err.message)) throw err;
+      reasons.push(`xmlfmt-${target}: ${err.message}`);
+      log(
+        `xmlfmt: xmlfmt-${target} is unavailable (${err.message}); ` +
+          `trying another build`
+      );
+      continue;
+    }
+    const probed = probe(dest);
+    if (probed.version === null) {
+      reasons.push(`xmlfmt-${target} ${probed.reason}`);
+      log(`xmlfmt: xmlfmt-${target} ${probed.reason}; trying another build`);
+      continue;
+    }
+    if (probed.version !== pkg.version) {
+      try {
+        fs.unlinkSync(dest);
+      } catch {}
+      throw new Error(
+        `the downloaded binary reports ${probed.version} but this package is ` +
+          `${pkg.version}; the release asset for v${pkg.version} is stale or ` +
+          `built from another commit`
+      );
+    }
+    writeStamp(dir, pkg.version);
+    log(`xmlfmt: installed ${dest}`);
+    return dest;
+  }
+
+  throw new Error(
+    `no build of xmlfmt ${pkg.version} runs on this machine ` +
+      `(${process.platform}-${process.arch}): ${reasons.join("; ")}. ` +
+      `Please report this with \`file ${dest}\` and \`uname -a\``
+  );
 }
 
 module.exports = {
@@ -244,11 +368,15 @@ module.exports = {
   TARGETS,
   STAMP_NAME,
   targetName,
+  targetCandidates,
+  glibcVersion,
   downloadUrl,
   binaryPath,
   stampPath,
   readStamp,
   writeStamp,
+  probe,
+  probeVersion,
   isInstalled,
   ensureBinary,
   verifyChecksum,

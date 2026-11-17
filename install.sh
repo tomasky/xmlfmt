@@ -108,12 +108,29 @@ else
   base="https://github.com/$REPO/releases/latest/download"
 fi
 
-asset="xmlfmt-$target"
+# On glibc Linux prefer the glibc build, which starts on hosts where the static
+# musl build is killed before it can print anything; fall back to musl when the
+# glibc asset is not published for this release.
+candidates="$target"
+if [ "$os" = Linux ] && ldd --version 2>&1 | grep -qi glibc; then
+  candidates="$target-gnu $target"
+fi
+
+asset=""
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-say "xmlfmt: downloading $base/$asset"
-dl "$base/$asset" "$tmp/$asset" || err "failed to download $base/$asset"
+for candidate in $candidates; do
+  asset="xmlfmt-$candidate"
+  say "xmlfmt: downloading $base/$asset"
+  if dl "$base/$asset" "$tmp/$asset" 2>/dev/null; then
+    break
+  fi
+  say "xmlfmt: $asset is not available, trying another build"
+  asset=""
+done
+
+[ -n "$asset" ] || err "failed to download a build for $os-$arch from $base"
 
 # --- verify ----------------------------------------------------------------
 if [ "$verify" = 1 ]; then

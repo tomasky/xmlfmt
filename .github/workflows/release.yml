@@ -3,7 +3,7 @@ name: release
 # Builds `xmlfmt` for every supported target and attaches the binaries to a
 # GitHub Release. The npm package in `npmjs/` downloads these assets.
 #
-#   git tag v0.1.8 && git push origin v0.1.8
+#   git tag v0.1.9 && git push origin v0.1.9
 
 on:
   push:
@@ -142,6 +142,20 @@ jobs:
             (cd dist && shasum -a 256 "xmlfmt-${{ matrix.target }}" > "xmlfmt-${{ matrix.target }}.sha256")
           fi
 
+      # The binary must know which release it belongs to: tagging a commit
+      # whose version was not bumped (or publishing npm before tagging) is how
+      # users end up running one version while npm says another.
+      - name: Verify binary reports the tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          got=$("dist/xmlfmt-${{ matrix.target }}" --version)
+          echo "binary reports: $got (tag $GITHUB_REF_NAME)"
+          if [ "$got" != "xmlfmt $want" ]; then
+            echo "error: binary reports '$got', expected 'xmlfmt $want'" >&2
+            exit 1
+          fi
+
       # Sanity check: Linux assets must be fully static or they would carry a
       # glibc version requirement and fail on older distributions.
       - name: Verify Linux binary is statically linked
@@ -159,6 +173,72 @@ jobs:
           path: |
             dist/xmlfmt-${{ matrix.target }}
             dist/xmlfmt-${{ matrix.target }}.sha256
+          if-no-files-found: error
+
+  # A second Linux build linked against glibc. The musl build is the portable
+  # default, but on some hosts it dies before `main` (hardened kernels, seccomp
+  # filters), so the npm wrapper prefers this one where glibc is what the
+  # machine uses.
+  build-linux-gnu:
+    name: build ${{ matrix.target }}-gnu
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            target: linux-aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoonBit toolchain
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: moon version
+        run: moon version
+
+      - name: Update registry index
+        run: moon update
+
+      - name: Build (release, glibc)
+        run: moon build --target native --release
+
+      - name: Stage binary
+        run: |
+          mkdir -p dist
+          cp _build/native/release/build/cmd/xmlfmt/xmlfmt.exe "dist/xmlfmt-${{ matrix.target }}-gnu"
+          chmod +x "dist/xmlfmt-${{ matrix.target }}-gnu"
+          file "dist/xmlfmt-${{ matrix.target }}-gnu"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "xmlfmt-${{ matrix.target }}-gnu" > "xmlfmt-${{ matrix.target }}-gnu.sha256")
+          else
+            (cd dist && shasum -a 256 "xmlfmt-${{ matrix.target }}-gnu" > "xmlfmt-${{ matrix.target }}-gnu.sha256")
+          fi
+
+      # The binary this build is meant to fix: if it cannot even print its
+      # version on a stock runner, do not publish it.
+      - name: Verify binary reports the tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          got=$("dist/xmlfmt-${{ matrix.target }}-gnu" --version)
+          echo "binary reports: $got (tag $GITHUB_REF_NAME)"
+          if [ "$got" != "xmlfmt $want" ]; then
+            echo "error: binary reports '$got', expected 'xmlfmt $want'" >&2
+            exit 1
+          fi
+          printf '<a><b>1</b></a>' | "dist/xmlfmt-${{ matrix.target }}-gnu" -c - | grep -qx '<a><b>1</b></a>'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xmlfmt-${{ matrix.target }}-gnu
+          path: |
+            dist/xmlfmt-${{ matrix.target }}-gnu
+            dist/xmlfmt-${{ matrix.target }}-gnu.sha256
           if-no-files-found: error
 
   build-darwin-x64:
@@ -214,6 +294,20 @@ jobs:
             (cd dist && shasum -a 256 "xmlfmt-darwin-x86_64" > "xmlfmt-darwin-x86_64.sha256")
           fi
 
+      # This binary cannot be executed here (cross-compiled), so compare the
+      # version it was built from instead.
+      - name: Verify built version matches the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          got=$(sed -n 's/^version = "\(.*\)"$/\1/p' moon.mod)
+          npm=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' npmjs/package.json)
+          echo "tag $want, moon.mod $got, npmjs/package.json $npm"
+          if [ "$got" != "$want" ] || [ "$npm" != "$want" ]; then
+            echo "error: tag, moon.mod and npmjs/package.json disagree" >&2
+            exit 1
+          fi
+
       - name: Verify macOS x64 binary header
         run: |
           python3 - "dist/xmlfmt-darwin-x86_64" <<'PY'
@@ -237,7 +331,7 @@ jobs:
 
   release:
     name: publish GitHub release
-    needs: [build, build-darwin-x64]
+    needs: [build, build-linux-gnu, build-darwin-x64]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -248,6 +342,22 @@ jobs:
 
       - name: List assets
         run: ls -l dist
+
+      # A missing asset means every user of that platform gets a 404 on first
+      # run, which is indistinguishable from "the tool does nothing".
+      - name: Verify every published asset is present
+        run: |
+          missing=0
+          targets="linux-x86_64 linux-aarch64 linux-x86_64-gnu linux-aarch64-gnu darwin-aarch64 darwin-x86_64"
+          for target in $targets; do
+            for asset in "xmlfmt-$target" "xmlfmt-$target.sha256"; do
+              if [ ! -f "dist/$asset" ]; then
+                echo "error: dist/$asset is missing" >&2
+                missing=1
+              fi
+            done
+          done
+          exit $missing
 
       - uses: softprops/action-gh-release@v2
         with:

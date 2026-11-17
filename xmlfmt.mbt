@@ -951,4 +951,4 @@ pub fn format_default(xml : String) -> String {
 ///|
 /// Version of the library and of the `xmlfmt` CLI. Keep it in sync with
 /// `moon.mod` and `npmjs/package.json` when releasing.
-pub const VERSION : String = "0.1.8"
+pub const VERSION : String = "0.1.9"

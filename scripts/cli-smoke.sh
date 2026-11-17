@@ -65,10 +65,22 @@ fi
 
 expected_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/moon.mod")
 
+# The npm package must publish the same version the binary reports, or users
+# upgrade the wrapper and still run a binary from another release.
+npm_version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$ROOT/npmjs/package.json")
+if [ "$npm_version" = "$expected_version" ]; then
+  pass "npmjs/package.json matches moon.mod ($expected_version)"
+else
+  fail "npmjs/package.json is $npm_version but moon.mod is $expected_version"
+fi
+
 # --help must go to stdout and succeed: it is normal program output.
 run "--help" 0 -- --help
 assert_stdout_has "Usage: xmlfmt" "--help mentions usage"
 assert_stdout_has "--version" "--help documents --version"
+# The help footer names the build, so a stale or shadowed binary is obvious.
+run "--help names the version" 0 -- --help
+assert_stdout_has "xmlfmt $expected_version" "--help names the running version"
 run "-h" 0 -- -h
 assert_stdout_has "Usage: xmlfmt" "-h mentions usage"
 
