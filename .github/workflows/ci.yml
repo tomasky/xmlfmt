@@ -40,15 +40,33 @@ jobs:
       - name: Test
         run: moon test
 
+      # Built through the same script the release uses, so CI builds carry the
+      # pinned baseline instruction set. A runner-built binary that needs AVX2
+      # is exactly what shipped as 0.1.9 and died with SIGILL.
       - name: Build (native, release)
-        run: moon build --target native --release
+        run: ./scripts/build-native.sh dist/xmlfmt-local
+
+      # Guards the bug that made 0.1.9 useless on pre-Haswell CPUs: the binary
+      # must run on qemu's oldest x86_64 model. Emulation is fine here, the
+      # failure mode is an illegal instruction rather than timing.
+      - name: Verify the binary runs without AVX2
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user
+          qemu-x86_64 -cpu qemu64 dist/xmlfmt-local --version
+          printf '<a><b>1</b></a>' |
+            qemu-x86_64 -cpu qemu64 dist/xmlfmt-local -c - | grep -qx '<a><b>1</b></a>' 
 
       # These cover the CLI itself: stdout/stderr split, exit codes and
       # argument handling, none of which `moon test` can reach.
       - name: CLI smoke tests
-        run: ./scripts/cli-smoke.sh
+        run: ./scripts/cli-smoke.sh dist/xmlfmt-local
 
       # The npm wrapper decides which binary to run; a stale download after an
       # upgrade is a silent wrong-version bug, so its logic is tested too.
+      # An explicit test file, not `npmjs/test/`: Node 22.23 and 24.22 on the
+      # runners resolve a directory argument as a module and fail with
+      # "Cannot find module '.../npmjs/test'".
       - name: npm wrapper tests
-        run: node --test npmjs/test/
+        run: node --test npmjs/test/lib.test.js

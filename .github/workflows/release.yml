@@ -3,7 +3,7 @@ name: release
 # Builds `xmlfmt` for every supported target and attaches the binaries to a
 # GitHub Release. The npm package in `npmjs/` downloads these assets.
 #
-#   git tag v0.1.9 && git push origin v0.1.9
+#   git tag v0.1.10 && git push origin v0.1.10
 
 on:
   push:
@@ -25,7 +25,13 @@ jobs:
           # run on any distribution regardless of its glibc version. A glibc
           # build would pick up the runner's glibc symbol versions and refuse
           # to start on older systems (e.g. `GLIBC_2.33' not found`).
-          - runner: ubuntu-latest
+          # Pinned to 24.04 rather than `ubuntu-latest`: newer Ubuntu images
+          # raise the compiler default to x86-64-v3 (AVX2), and their static
+          # musl libc.a is built the same way. `-march=x86-64` in
+          # scripts/build-native.sh keeps *our* code at the baseline, but only
+          # an older image keeps libc.a itself baseline too; a v3 memcpy is
+          # SIGILL on a pre-Haswell CPU just the same.
+          - runner: ubuntu-24.04
             target: linux-x86_64
             musl: true
           # GitHub's arm64 Linux runners are only available to public
@@ -51,90 +57,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
-      # The MoonBit runtime's arm64 simdutf.o is compiled against glibc
-      # headers and references `__memcpy_chk`; musl provides no `*_chk`
-      # fortify symbols, so link a small shim supplying them.
-      - name: Build fortify shim (glibc *_chk for musl)
-        if: matrix.musl
-        run: |
-          mkdir -p /tmp/xmlfmt-cc
-          cat > /tmp/xmlfmt-cc/fortify_shim.c <<'EOF'
-          #include <string.h>
-          #include <stdarg.h>
-          #include <stdio.h>
-          void *__memcpy_chk(void *d, const void *s, size_t n, size_t dn) { (void)dn; return memcpy(d, s, n); }
-          void *__memmove_chk(void *d, const void *s, size_t n, size_t dn) { (void)dn; return memmove(d, s, n); }
-          void *__memset_chk(void *d, int c, size_t n, size_t dn) { (void)dn; return memset(d, c, n); }
-          char *__strcpy_chk(char *d, const char *s, size_t dn) { (void)dn; return strcpy(d, s); }
-          char *__stpcpy_chk(char *d, const char *s, size_t dn) { (void)dn; return stpcpy(d, s); }
-          char *__strcat_chk(char *d, const char *s, size_t dn) { (void)dn; return strcat(d, s); }
-          char *__strncpy_chk(char *d, const char *s, size_t n, size_t dn) { (void)dn; return strncpy(d, s, n); }
-          char *__strncat_chk(char *d, const char *s, size_t n, size_t dn) { (void)dn; return strncat(d, s, n); }
-          int __sprintf_chk(char *s, int flag, size_t slen, const char *fmt, ...) { (void)flag; (void)slen; va_list ap; va_start(ap, fmt); int r = vsprintf(s, fmt, ap); va_end(ap); return r; }
-          int __vsprintf_chk(char *s, int flag, size_t slen, const char *fmt, va_list ap) { (void)flag; (void)slen; return vsprintf(s, fmt, ap); }
-          int __snprintf_chk(char *s, size_t n, int flag, size_t slen, const char *fmt, ...) { (void)flag; (void)slen; va_list ap; va_start(ap, fmt); int r = vsnprintf(s, n, fmt, ap); va_end(ap); return r; }
-          int __vsnprintf_chk(char *s, size_t n, int flag, size_t slen, const char *fmt, va_list ap) { (void)flag; (void)slen; return vsnprintf(s, n, fmt, ap); }
-          int __printf_chk(int flag, const char *fmt, ...) { (void)flag; va_list ap; va_start(ap, fmt); int r = vprintf(fmt, ap); va_end(ap); return r; }
-          int __vprintf_chk(int flag, const char *fmt, va_list ap) { (void)flag; return vprintf(fmt, ap); }
-          int __fprintf_chk(FILE *f, int flag, const char *fmt, ...) { (void)flag; va_list ap; va_start(ap, fmt); int r = vfprintf(f, fmt, ap); va_end(ap); return r; }
-          int __vfprintf_chk(FILE *f, int flag, const char *fmt, va_list ap) { (void)flag; return vfprintf(f, fmt, ap); }
-          EOF
-          musl-gcc -O2 -c /tmp/xmlfmt-cc/fortify_shim.c -o /tmp/xmlfmt-cc/fortify_shim.o
-          ar rcs /tmp/xmlfmt-cc/libmbfortify.a /tmp/xmlfmt-cc/fortify_shim.o
-
-      - name: moon version
-        run: moon version
-
-      # A fresh runner has an empty registry index, so dependencies
-      # (moonbitlang/x, bobzhang/zip, ...) cannot be resolved until the index
-      # is fetched.
-      - name: Update registry index
-        run: moon update
-
-      # MOON_CC drives both the compile and the link step. The wrapper adds
-      # `-static`, and `moon` looks for `ar` next to the compiler driver, so
-      # the wrapper directory gets a symlink to the system `ar`. Link
-      # invocations also get the fortify shim; compile invocations (`-c`) are
-      # passed through untouched.
-      - name: Prepare Linux headers for musl
-        if: matrix.musl
-        run: |
-          rm -rf /tmp/linux-headers
-          mkdir -p /tmp/linux-headers
-          ln -s /usr/include/linux /tmp/linux-headers/linux
-          case "$(uname -m)" in
-            x86_64) asm_dir=/usr/include/x86_64-linux-gnu/asm ;;
-            aarch64) asm_dir=/usr/include/aarch64-linux-gnu/asm ;;
-            *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
-          esac
-          ln -s "$asm_dir" /tmp/linux-headers/asm
-          ln -s /usr/include/asm-generic /tmp/linux-headers/asm-generic
-
-      - name: Build (static musl, release)
-        if: matrix.musl
-        run: |
-          cat > /tmp/xmlfmt-cc/xmlfmt-musl-gcc <<'EOF'
-          #!/bin/sh
-          for arg in "$@"; do
-            if [ "$arg" = "-c" ]; then
-              exec musl-gcc -D_GNU_SOURCE -include limits.h -I/tmp/linux-headers "$@"
-            fi
-          done
-          exec musl-gcc "$@" -static -L/tmp/xmlfmt-cc -lmbfortify
-          EOF
-          chmod +x /tmp/xmlfmt-cc/xmlfmt-musl-gcc
-          ln -sf "$(command -v ar)" /tmp/xmlfmt-cc/ar
-          MOON_CC=/tmp/xmlfmt-cc/xmlfmt-musl-gcc MOON_AR=ar moon build --target native --release
-
+      # The build script pins the baseline instruction set and wraps the
+      # compiler: distributing a binary that needs AVX2 is what makes it die
+      # with SIGILL on older CPUs.
       - name: Build (release)
-        if: ${{ !matrix.musl }}
-        run: moon build --target native --release
+        run: |
+          if [ "${{ matrix.musl }}" = "true" ]; then
+            ./scripts/build-native.sh --static "dist/xmlfmt-${{ matrix.target }}"
+          else
+            ./scripts/build-native.sh "dist/xmlfmt-${{ matrix.target }}"
+          fi
 
       - name: Stage binary
         run: |
           mkdir -p dist
-          cp _build/native/release/build/cmd/xmlfmt/xmlfmt.exe "dist/xmlfmt-${{ matrix.target }}"
-          chmod +x "dist/xmlfmt-${{ matrix.target }}"
           file "dist/xmlfmt-${{ matrix.target }}" || true
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum "xmlfmt-${{ matrix.target }}" > "xmlfmt-${{ matrix.target }}.sha256")
@@ -167,6 +103,22 @@ jobs:
             exit 1
           fi
 
+      # The x86_64 artifact must run on a CPU without AVX2, which is what the
+      # 0.1.9 release failed to do (SIGILL on the user's machine). qemu's
+      # `qemu64` model is the oldest thing we can test against; emulation is
+      # enough because the failure is an illegal instruction, not timing.
+      # This also covers libc.a: on a v3 image the static musl copy is v3 too,
+      # and `-march` alone cannot fix that — hence the 24.04 runner pin.
+      - name: Verify the binary runs without AVX2
+        if: matrix.target == 'linux-x86_64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user
+          qemu-x86_64 -cpu qemu64 "dist/xmlfmt-${{ matrix.target }}" --version
+          printf '<a><b>1</b></a>' |
+            qemu-x86_64 -cpu qemu64 "dist/xmlfmt-${{ matrix.target }}" -c - |
+            grep -qx '<a><b>1</b></a>'
+
       - uses: actions/upload-artifact@v4
         with:
           name: xmlfmt-${{ matrix.target }}
@@ -186,7 +138,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          # Same reason as the musl build: 24.04 keeps the C library it links
+          # against at the x86-64 baseline.
+          - runner: ubuntu-24.04
             target: linux-x86_64
           - runner: ubuntu-24.04-arm
             target: linux-aarch64
@@ -205,13 +159,11 @@ jobs:
         run: moon update
 
       - name: Build (release, glibc)
-        run: moon build --target native --release
+        run: ./scripts/build-native.sh "dist/xmlfmt-${{ matrix.target }}-gnu"
 
       - name: Stage binary
         run: |
           mkdir -p dist
-          cp _build/native/release/build/cmd/xmlfmt/xmlfmt.exe "dist/xmlfmt-${{ matrix.target }}-gnu"
-          chmod +x "dist/xmlfmt-${{ matrix.target }}-gnu"
           file "dist/xmlfmt-${{ matrix.target }}-gnu"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum "xmlfmt-${{ matrix.target }}-gnu" > "xmlfmt-${{ matrix.target }}-gnu.sha256")
