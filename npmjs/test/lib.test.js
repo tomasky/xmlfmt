@@ -326,6 +326,9 @@ test("targetCandidates prefers a glibc build on glibc Linux only", () => {
 test("ensureBinary falls back when the preferred asset is missing", async () => {
   const target = lib.targetName();
   assert.ok(target, "tests require a supported platform");
+  // Only glibc Linux has a second candidate to fall back to; elsewhere the
+  // single candidate is downloaded directly and there is no fallback message.
+  if (lib.targetCandidates(true).length < 2) return;
 
   const dir = tmpdir();
   const fresh = Buffer.from(fakeBinary(lib.pkg.version));

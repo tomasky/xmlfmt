@@ -43,8 +43,12 @@ jobs:
       # Built through the same script the release uses, so CI builds carry the
       # pinned baseline instruction set. A runner-built binary that needs AVX2
       # is exactly what shipped as 0.1.9 and died with SIGILL.
-      - name: Build (native, release)
-        run: ./scripts/build-native.sh dist/xmlfmt-local
+      # The static musl build is what ships for Linux, so CI tests that exact
+      # artifact. It also makes the AVX2 gate meaningful: a static binary does
+      # not load the host's glibc, which on newer images is itself built for
+      # x86-64-v3 and would SIGILL under `qemu64` regardless of our code.
+      - name: Build (static, release)
+        run: ./scripts/build-native.sh --static dist/xmlfmt-static
 
       # Guards the bug that made 0.1.9 useless on pre-Haswell CPUs: the binary
       # must run on qemu's oldest x86_64 model. Emulation is fine here, the
@@ -54,14 +58,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-user
-          qemu-x86_64 -cpu qemu64 dist/xmlfmt-local --version
+          qemu-x86_64 -cpu qemu64 dist/xmlfmt-static --version
           printf '<a><b>1</b></a>' |
-            qemu-x86_64 -cpu qemu64 dist/xmlfmt-local -c - | grep -qx '<a><b>1</b></a>' 
+            qemu-x86_64 -cpu qemu64 dist/xmlfmt-static -c - | grep -qx '<a><b>1</b></a>' 
 
       # These cover the CLI itself: stdout/stderr split, exit codes and
       # argument handling, none of which `moon test` can reach.
       - name: CLI smoke tests
-        run: ./scripts/cli-smoke.sh dist/xmlfmt-local
+        run: ./scripts/cli-smoke.sh dist/xmlfmt-static
 
       # The npm wrapper decides which binary to run; a stale download after an
       # upgrade is a silent wrong-version bug, so its logic is tested too.
