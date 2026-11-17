@@ -110,6 +110,12 @@ chmod +x "$work/xmlfmt-cc"
 ln -sf "$(command -v ar)" "$work/ar"
 
 # --- build ----------------------------------------------------------------
+# A fresh checkout has an empty registry index, so dependencies such as
+# moonbitlang/x cannot be resolved until it is fetched. This used to be a
+# separate workflow step and its omission made every release build fail with
+# "module was not found in the registry".
+"${XMLFMT_MOON:-moon}" update
+
 say "xmlfmt: building (static=$static, workdir $work)"
 cd "$root"
 MOON_CC="$work/xmlfmt-cc" MOON_AR=ar "${XMLFMT_MOON:-moon}" build --target native --release
