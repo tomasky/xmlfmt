@@ -60,6 +60,21 @@ npm rebuild @tomasko/xmlfmt
 pnpm rebuild @tomasko/xmlfmt
 ```
 
+## Upgrading
+
+The wrapper only runs a binary that was downloaded for the installed package
+version. After `npm i -g @tomasko/xmlfmt@latest`, a binary left behind by an
+older version is detected (its version stamp in `bin/.xmlfmt-version` no longer
+matches) and replaced on the next run, with a note on stderr:
+
+```
+xmlfmt: installed binary is for 0.1.5, this package is 0.1.8; fetching the matching binary
+```
+
+So `xmlfmt --version` always reports the version you upgraded to. If a run
+still shows an older version, the file being executed is not this package:
+check `which -a xmlfmt`.
+
 ## Overrides
 
 | Variable             | Purpose                                          |

@@ -2,7 +2,7 @@
 package "kupas/xmlfmt"
 
 // Values
-pub const VERSION : String = "0.1.7"
+pub const VERSION : String = "0.1.8"
 
 pub fn decode_input(Bytes) -> String
 

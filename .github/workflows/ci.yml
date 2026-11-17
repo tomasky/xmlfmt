@@ -47,3 +47,8 @@ jobs:
       # argument handling, none of which `moon test` can reach.
       - name: CLI smoke tests
         run: ./scripts/cli-smoke.sh
+
+      # The npm wrapper decides which binary to run; a stale download after an
+      # upgrade is a silent wrong-version bug, so its logic is tested too.
+      - name: npm wrapper tests
+        run: node --test npmjs/test/

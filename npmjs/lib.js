@@ -45,21 +45,46 @@ function downloadUrl(target) {
   return `https://github.com/${repo}/releases/download/v${version}/xmlfmt-${target}`;
 }
 
-function binaryPath() {
+function binaryPath(dir) {
   return path.join(
-    __dirname,
+    dir || __dirname,
     "bin",
     process.platform === "win32" ? "xmlfmt.exe" : "xmlfmt"
   );
 }
 
-function isInstalled() {
+// The downloaded binary is only valid for the package version that fetched it.
+// Its stamp is written next to it so an upgrade can tell a current binary from
+// one left behind by an older version: the wrapper used to accept any existing
+// file, so a stale download silently kept the old behaviour after `npm i -g`.
+const STAMP_NAME = ".xmlfmt-version";
+
+function stampPath(dir) {
+  return path.join(dir || __dirname, "bin", STAMP_NAME);
+}
+
+// Version recorded for the binary currently in `dir`, or null if unknown.
+function readStamp(dir) {
   try {
-    fs.accessSync(binaryPath(), fs.constants.X_OK);
-    return true;
+    return fs.readFileSync(stampPath(dir), "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
+function writeStamp(dir, version) {
+  fs.mkdirSync(path.dirname(stampPath(dir)), { recursive: true });
+  fs.writeFileSync(stampPath(dir), `${version}\n`);
+}
+
+// True when a binary is present *and* was downloaded for this package version.
+function isInstalled(dir) {
+  try {
+    fs.accessSync(binaryPath(dir), fs.constants.X_OK);
   } catch {
     return false;
   }
+  return readStamp(dir) === pkg.version;
 }
 
 function fetch(url, redirects) {
@@ -168,16 +193,34 @@ async function verifyChecksum(target, dest, log = () => {}) {
   log(`xmlfmt: checksum verified for ${asset}`);
 }
 
-async function ensureBinary({ force = false, log = () => {} } = {}) {
-  const dest = binaryPath();
+async function ensureBinary({ force = false, log = () => {}, dir } = {}) {
+  const dest = binaryPath(dir);
+  const stale = (() => {
+    try {
+      fs.accessSync(dest, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
 
-  if (!force && !process.env.XMLFMT_FORCE_DOWNLOAD && isInstalled()) {
+  if (!force && !process.env.XMLFMT_FORCE_DOWNLOAD && isInstalled(dir)) {
     return dest;
   }
 
   if (process.env.XMLFMT_SKIP_DOWNLOAD) {
-    if (isInstalled()) return dest;
+    if (isInstalled(dir)) return dest;
     throw new Error("XMLFMT_SKIP_DOWNLOAD is set but no binary is installed");
+  }
+
+  // Say why an existing binary is being replaced instead of silently reusing
+  // it: a stale download after an upgrade is the failure this check exists for.
+  if (stale && !force) {
+    const found = readStamp(dir);
+    log(
+      `xmlfmt: installed binary is for ${found || "an unknown version"}, ` +
+        `this package is ${pkg.version}; fetching the matching binary`
+    );
   }
 
   const target = targetName();
@@ -191,6 +234,7 @@ async function ensureBinary({ force = false, log = () => {} } = {}) {
   log(`xmlfmt: downloading ${downloadUrl(target)}`);
   await download(target, dest);
   await verifyChecksum(target, dest, log);
+  writeStamp(dir, pkg.version);
   log(`xmlfmt: installed ${dest}`);
   return dest;
 }
@@ -198,9 +242,13 @@ async function ensureBinary({ force = false, log = () => {} } = {}) {
 module.exports = {
   pkg,
   TARGETS,
+  STAMP_NAME,
   targetName,
   downloadUrl,
   binaryPath,
+  stampPath,
+  readStamp,
+  writeStamp,
   isInstalled,
   ensureBinary,
   verifyChecksum,
