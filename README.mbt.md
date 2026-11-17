@@ -88,6 +88,12 @@ xmlfmt --indent 4 input.xml
 | `--output <file>` | `-o` | none | Write output to file |
 | `--infile <file>` | `-f` | none | Input file |
 | `--overwrite` | `-w` | false | Overwrite input file in place |
+| `--version` | `-v` | — | Print the version and exit |
+| `--help` | `-h` | — | Print usage to stdout and exit |
+
+Exit codes: `0` on success, `1` when an input file cannot be read or an
+output file cannot be written, `2` on a bad command line (unknown option or a
+missing option value).
 
 ### Pretty Output (default)
 

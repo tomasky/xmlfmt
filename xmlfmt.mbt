@@ -813,3 +813,8 @@ pub fn format(xml : String, options : XmlOptions) -> String {
 pub fn format_default(xml : String) -> String {
   format(xml, default_options())
 }
+
+///|
+/// Version of the library and of the `xmlfmt` CLI. Keep it in sync with
+/// `moon.mod` and `npmjs/package.json` when releasing.
+pub const VERSION : String = "0.1.6"

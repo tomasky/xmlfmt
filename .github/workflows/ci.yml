@@ -42,3 +42,8 @@ jobs:
 
       - name: Build (native, release)
         run: moon build --target native --release
+
+      # These cover the CLI itself: stdout/stderr split, exit codes and
+      # argument handling, none of which `moon test` can reach.
+      - name: CLI smoke tests
+        run: ./scripts/cli-smoke.sh

@@ -20,15 +20,21 @@ fn main {
   let files : Array[String] = []
 
   let mut i = 1 // skip program name
+  let mut had_error = false
   while i < args.length() {
     let arg = args[i]
     if arg == "--help" || arg == "-h" {
       print_usage()
       return
+    } else if arg == "--version" || arg == "-v" || arg == "-V" {
+      println("xmlfmt \{@lib.VERSION}")
+      return
     } else if arg == "--indent" || arg == "-i" {
       i = i + 1
       if i < args.length() {
         indent = parse_int(args[i])
+      } else {
+        usage_error("option \{arg} requires a value")
       }
     } else if arg.has_prefix("--indent=") {
       indent = parse_int(arg.unsafe_substring(start=9, end=arg.length()))
@@ -36,16 +42,22 @@ fn main {
       i = i + 1
       if i < args.length() {
         indent_char = args[i]
+      } else {
+        usage_error("option \{arg} requires a value")
       }
     } else if arg == "--output" || arg == "--outfile" || arg == "-o" {
       i = i + 1
       if i < args.length() {
         outfile = Some(args[i])
+      } else {
+        usage_error("option \{arg} requires a value")
       }
     } else if arg == "--infile" || arg == "-f" {
       i = i + 1
       if i < args.length() {
         infile = Some(args[i])
+      } else {
+        usage_error("option \{arg} requires a value")
       }
     } else if arg == "--overwrite" || arg == "-w" {
       overwrite = true
@@ -58,6 +70,8 @@ fn main {
           .map(fn(s) { s.trim().to_owned() })
           .filter(fn(s) { !s.is_empty() })
           .collect()
+      } else {
+        usage_error("option \{arg} requires a value")
       }
     } else if arg == "--blanks" || arg == "-b" {
       blanks = true
@@ -80,7 +94,7 @@ fn main {
     } else if arg == "-" {
       files.push("-")
     } else if arg.has_prefix("--") || arg.has_prefix("-") {
-      eprintln("Unknown option: " + arg)
+      usage_error("unknown option \{arg}")
     } else {
       files.push(arg)
     }
@@ -112,72 +126,99 @@ fn main {
   }
 
   for file in files {
-    let content = if file == "-" {
-      read_stdin()
+    let content : String? = if file == "-" {
+      Some(read_stdin())
     } else {
-      @fs.read_file_to_string(file) catch {
+      Some(@fs.read_file_to_string(file)) catch {
         _ => {
-          eprintln("Error reading file: " + file)
-          ""
+          eprintln("xmlfmt: cannot read \{file}")
+          had_error = true
+          None
         }
       }
     }
+    // A file that could not be read contributes no output at all: printing an
+    // empty document would look like a successful, empty result.
+    guard content is Some(content) else { continue }
     let result = @lib.format(content, options)
     if overwrite && file != "-" {
       @fs.write_string_to_file(file, result) catch {
-        _ => eprintln("Error writing file: " + file)
+        _ => {
+          eprintln("xmlfmt: cannot write \{file}")
+          had_error = true
+        }
       }
     } else if outfile is Some(out) {
       @fs.write_string_to_file(out, result) catch {
-        _ => eprintln("Error writing file: " + out)
+        _ => {
+          eprintln("xmlfmt: cannot write \{out}")
+          had_error = true
+        }
       }
     } else {
       println(result)
     }
   }
+
+  if had_error {
+    @env.exit(1)
+  }
 }
 
 ///|
+/// Print an argument error plus the usage summary to stderr and exit with
+/// status 2, matching the `xmlformat` CLI this tool is ported from.
+fn usage_error(message : String) -> Unit {
+  eprintln("xmlfmt: \{message}")
+  eprintln("Try 'xmlfmt --help' for more information.")
+  @env.exit(2)
+}
+
+///|
+/// Write the usage summary to stdout: `--help` is a normal, successful
+/// request, so its output must be capturable and pipeable like any other
+/// program output. Errors go through `usage_error` instead.
 fn print_usage() -> Unit {
-  eprintln("Usage: xmlfmt [options] [file...]")
-  eprintln("")
-  eprintln("Options:")
-  eprintln(
+  println("Usage: xmlfmt [options] [file...]")
+  println("")
+  println("Options:")
+  println(
     "  -i, --indent <num>            Number of indent chars per level (default: 2)",
   )
-  eprintln(
+  println(
     "  -I, --indent-char <char>      Indentation character (default: space)",
   )
-  eprintln("  -c, --compress                Minify output (remove whitespace)")
-  eprintln(
+  println("  -c, --compress                Minify output (remove whitespace)")
+  println(
     "  -s, --selfclose               Use self-closing tags for empty elements",
   )
-  eprintln(
+  println(
     "  -S, --selfclose-space         Add space before /> in self-closing tags",
   )
-  eprintln("  -l, --disable-inlineformatting")
-  eprintln("                                Disable inline formatting")
-  eprintln("  -C, --disable-correction      Disable whitespace correction")
-  eprintln("  -b, --blanks                  Preserve blank lines")
-  eprintln("  -n, --eof-newline             Add newline at end of file")
-  eprintln(
+  println("  -l, --disable-inlineformatting")
+  println("                                Disable inline formatting")
+  println("  -C, --disable-correction      Disable whitespace correction")
+  println("  -b, --blanks                  Preserve blank lines")
+  println("  -n, --eof-newline             Add newline at end of file")
+  println(
     "  -p, --preserve <elems>        Comma-separated elements to preserve whitespace",
   )
-  eprintln("  -a, --preserve-attributes     Preserve attribute order")
-  eprintln("  -E, --encode-attributes       Encode > and ' in attribute values")
-  eprintln("  -o, --output/--outfile <file> Write output to file")
-  eprintln("  -f, --infile <file>           Input file")
-  eprintln("  -w, --overwrite               Overwrite input file")
-  eprintln("  -h, --help                    Show this help")
-  eprintln("")
-  eprintln("Examples:")
-  eprintln("  xmlfmt input.xml                    Pretty-print to stdout")
-  eprintln("  xmlfmt -c input.xml                 Compress/minify")
-  eprintln("  xmlfmt -i 4 input.xml               4-space indentation")
-  eprintln("  xmlfmt -s -S input.xml              Self-closing tags with space")
-  eprintln("  xmlfmt -o out.xml input.xml         Write to file")
-  eprintln("  xmlfmt -w input.xml                 Overwrite in place")
-  eprintln("  cat input.xml | xmlfmt -            Read from stdin")
+  println("  -a, --preserve-attributes     Preserve attribute order")
+  println("  -E, --encode-attributes       Encode > and ' in attribute values")
+  println("  -o, --output/--outfile <file> Write output to file")
+  println("  -f, --infile <file>           Input file")
+  println("  -w, --overwrite               Overwrite input file")
+  println("  -h, --help                    Show this help")
+  println("  -v, --version                 Show the version")
+  println("")
+  println("Examples:")
+  println("  xmlfmt input.xml                    Pretty-print to stdout")
+  println("  xmlfmt -c input.xml                 Compress/minify")
+  println("  xmlfmt -i 4 input.xml               4-space indentation")
+  println("  xmlfmt -s -S input.xml              Self-closing tags with space")
+  println("  xmlfmt -o out.xml input.xml         Write to file")
+  println("  xmlfmt -w input.xml                 Overwrite in place")
+  println("  cat input.xml | xmlfmt -            Read from stdin")
 }
 
 ///|
